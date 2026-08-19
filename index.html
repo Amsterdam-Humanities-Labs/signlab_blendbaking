@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>blendBaking - SRT en Glossen</title>
+<!-- Bootstrap 5 CSS (same CDN as zinnenVideoStatus.html / dashboard.html) -->
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", Helvetica, sans-serif;
+    background-color: #f8f9fa;
+    padding-top: 20px;
+  }
+  .content-section {
+    background-color: white;
+    padding: 20px;
+    border-radius: 0.5rem;
+    box-shadow: 0 .125rem .25rem rgba(0,0,0,.075);
+    margin-bottom: 20px;
+  }
+  .table-responsive {
+    max-height: 65vh;
+    overflow-y: auto;
+  }
+  thead th {
+    position: sticky;
+    top: 0;
+    background-color: #fff;
+    z-index: 1;
+    cursor: default;
+  }
+  th.sortable {
+    cursor: pointer;
+    user-select: none;
+  }
+  th.sortable:hover {
+    color: #0d6efd;
+  }
+  .old-take-marker {
+    color: #6c757d;
+    cursor: help;
+  }
+  #rowCounter, #glossCounter {
+    font-weight: 500;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1 class="h3 mb-4">blendBaking</h1>
+
+  <ul class="nav nav-tabs" id="mainTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" id="srt-tab" data-bs-toggle="tab" data-bs-target="#srt-pane"
+              type="button" role="tab" aria-controls="srt-pane" aria-selected="true">SRT bestanden</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="gloss-tab" data-bs-toggle="tab" data-bs-target="#gloss-pane"
+              type="button" role="tab" aria-controls="gloss-pane" aria-selected="false">Glossen</button>
+    </li>
+  </ul>
+
+  <div class="tab-content" id="mainTabsContent">
+
+    <!-- Tab 1: SRT bestanden -->
+    <div class="tab-pane fade show active" id="srt-pane" role="tabpanel" aria-labelledby="srt-tab">
+      <div class="content-section">
+
+        <div id="srtAlerts"></div>
+
+        <div class="row g-2 align-items-center mb-3">
+          <div class="col-md-4">
+            <input type="text" id="srtSearch" class="form-control" placeholder="Zoek op basis of zin...">
+          </div>
+          <div class="col-md-3">
+            <select id="srtStatusFilter" class="form-select">
+              <option value="">Alle</option>
+              <option value="Klaar">Klaar</option>
+              <option value="Check nodig">Check nodig</option>
+              <option value="Niet Klaar">Niet Klaar</option>
+            </select>
+          </div>
+          <div class="col-md-5 text-md-end">
+            <span id="rowCounter">Laden...</span>
+          </div>
+        </div>
+
+        <div class="row g-2 mb-3">
+          <div class="col-auto">
+            <button id="downloadSelectedBtn" class="btn btn-primary" disabled>Download geselecteerde als ZIP</button>
+          </div>
+          <div class="col-auto">
+            <button id="downloadAllBtn" class="btn btn-outline-primary" disabled>Download alles (huidige filter)</button>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-striped table-hover align-middle">
+            <thead>
+              <tr>
+                <th><input type="checkbox" id="srtSelectAll" class="form-check-input"></th>
+                <th>Basis</th>
+                <th>Zin</th>
+                <th>Thema</th>
+                <th>Take</th>
+                <th>GLB</th>
+                <th>SRT</th>
+                <th>Status tijd annotatie</th>
+              </tr>
+            </thead>
+            <tbody id="srtTableBody">
+              <tr><td colspan="8" class="text-center text-muted">Laden...</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Tab 2: Glossen -->
+    <div class="tab-pane fade" id="gloss-pane" role="tabpanel" aria-labelledby="gloss-tab">
+      <div class="content-section">
+
+        <div id="glossAlerts"></div>
+
+        <div class="row g-2 align-items-center mb-3">
+          <div class="col-md-4">
+            <input type="text" id="glossSearch" class="form-control" placeholder="Zoek op basis of variant...">
+          </div>
+          <div class="col-md-3">
+            <select id="glossCategoryFilter" class="form-select">
+              <option value="">Alle categorieën</option>
+            </select>
+          </div>
+          <div class="col-md-5 text-md-end">
+            <span id="glossCounter">Laden...</span>
+          </div>
+        </div>
+
+        <div class="row g-2 mb-3">
+          <div class="col-auto">
+            <button id="rebuildIndexBtn" class="btn btn-outline-secondary">Herbouw index</button>
+          </div>
+          <div class="col-auto">
+            <button id="exportCsvBtn" class="btn btn-outline-primary" disabled>Exporteer CSV</button>
+          </div>
+          <div class="col-auto">
+            <button id="exportJsonBtn" class="btn btn-outline-primary" disabled>Exporteer JSON</button>
+          </div>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-striped table-hover align-middle">
+            <thead>
+              <tr>
+                <th>Basis</th>
+                <th>Varianten</th>
+                <th class="sortable" data-sort="count">Aantal <span class="sort-arrow"></span></th>
+                <th class="sortable" data-sort="videos">Video's <span class="sort-arrow"></span></th>
+                <th>Categorie</th>
+              </tr>
+            </thead>
+            <tbody id="glossTableBody">
+              <tr><td colspan="5" class="text-center text-muted">Laden...</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  // ---------------------------------------------------------------------
+  // Utilities
+  // ---------------------------------------------------------------------
+
+  function escapeHtml(value) {
+    if (value === null || value === undefined) { return ""; }
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function showAlert(containerId, message) {
+    var box = document.getElementById(containerId);
+    var div = document.createElement("div");
+    div.className = "alert alert-danger alert-dismissible fade show";
+    div.setAttribute("role", "alert");
+    div.innerHTML = escapeHtml(message) +
+      '<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Sluiten"></button>';
+    box.appendChild(div);
+  }
+
+  function clearAlerts(containerId) {
+    document.getElementById(containerId).innerHTML = "";
+  }
+
+  // Submits a POST form (so long base lists survive) targeting the given
+  // action, with one hidden bases[] input per base. The response carries a
+  // Content-Disposition: attachment header, so the browser downloads it
+  // without navigating away from this page.
+  function postBasesAsZip(bases) {
+    var form = document.createElement("form");
+    form.method = "POST";
+    form.action = "api.php?action=zip";
+    form.style.display = "none";
+    bases.forEach(function (base) {
+      var input = document.createElement("input");
+      input.type = "hidden";
+      input.name = "bases[]";
+      input.value = base;
+      form.appendChild(input);
+    });
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
+  }
+
+  function downloadBlob(filename, content, mime) {
+    var blob = new Blob([content], { type: mime });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function csvCell(value) {
+    var s = value === null || value === undefined ? "" : String(value);
+    if (/[",\n]/.test(s)) {
+      s = '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  }
+
+  // ---------------------------------------------------------------------
+  // Tab 1: SRT bestanden
+  // ---------------------------------------------------------------------
+
+  var srtAllRows = [];
+  var srtSelected = new Set(); // selected `base` values, survives filtering
+
+  function fetchAllPages(baseUrl) {
+    // Pages until videos.length === total, per the API's 500-row cap.
+    return fetch(baseUrl + (baseUrl.indexOf("?") >= 0 ? "&" : "?") + "page=1")
+      .then(function (res) { return res.json(); })
+      .then(function (first) {
+        if (!first.success) {
+          throw new Error(first.error || "Onbekende fout bij het ophalen van de lijst.");
+        }
+        var rows = first.videos.slice();
+        var total = first.total;
+        if (rows.length >= total) { return rows; }
+
+        function nextPage(page) {
+          var url = baseUrl + (baseUrl.indexOf("?") >= 0 ? "&" : "?") + "page=" + page;
+          return fetch(url).then(function (res) { return res.json(); }).then(function (data) {
+            if (!data.success) {
+              throw new Error(data.error || "Onbekende fout bij het ophalen van pagina " + page + ".");
+            }
+            if (!data.videos.length) { return; }
+            rows = rows.concat(data.videos);
+            if (rows.length < total) {
+              return nextPage(page + 1);
+            }
+          });
+        }
+
+        return nextPage(2).then(function () { return rows; });
+      });
+  }
+
+  function loadSrtTab() {
+    clearAlerts("srtAlerts");
+    document.getElementById("srtTableBody").innerHTML =
+      '<tr><td colspan="8" class="text-center text-muted">Laden...</td></tr>';
+
+    fetchAllPages("api.php?action=list&limit=500")
+      .then(function (rows) {
+        srtAllRows = rows;
+        srtSelected.clear();
+        applySrtFilters();
+      })
+      .catch(function (err) {
+        showAlert("srtAlerts", err.message || String(err));
+        document.getElementById("srtTableBody").innerHTML =
+          '<tr><td colspan="8" class="text-center text-muted">Kon de lijst niet laden.</td></tr>';
+        document.getElementById("rowCounter").textContent = "";
+      });
+  }
+
+  function statusBucket(status) {
+    if (status === "Klaar") { return "Klaar"; }
+    if (status === "Check nodig") { return "Check nodig"; }
+    return "Niet Klaar";
+  }
+
+  function statusBadgeHtml(status) {
+    var bucket = statusBucket(status);
+    if (bucket === "Klaar") {
+      return '<span class="badge bg-success">Klaar</span>';
+    }
+    if (bucket === "Check nodig") {
+      return '<span class="badge bg-warning text-dark">Check nodig</span>';
+    }
+    return '<span class="badge bg-secondary">Niet Klaar</span>';
+  }
+
+  function applySrtFilters() {
+    var search = document.getElementById("srtSearch").value.trim().toLowerCase();
+    var statusFilter = document.getElementById("srtStatusFilter").value;
+
+    var filtered = srtAllRows.filter(function (row) {
+      if (search) {
+        var base = (row.base || "").toLowerCase();
+        var zin = (row.zin || "").toLowerCase();
+        if (base.indexOf(search) < 0 && zin.indexOf(search) < 0) { return false; }
+      }
+      if (statusFilter && statusBucket(row.mcp_status_tijd_annotatie) !== statusFilter) {
+        return false;
+      }
+      return true;
+    });
+
+    renderSrtTable(filtered);
+    updateSrtCounter(filtered);
+    updateSrtButtons(filtered);
+    return filtered;
+  }
+
+  function renderSrtTable(rows) {
+    var tbody = document.getElementById("srtTableBody");
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">Geen resultaten.</td></tr>';
+      return;
+    }
+    var html = rows.map(function (row) {
+      var checked = srtSelected.has(row.base) ? " checked" : "";
+      var oldTakeMarker = row.glbIsLatestTake === false
+        ? ' <span class="old-take-marker" title="Deze GLB komt van een oudere take dan de nieuwste opname.">&#9888;</span>'
+        : "";
+      var glbCell = row.glbUrl
+        ? '<a href="' + escapeHtml(row.glbUrl) + '" target="_blank" rel="noopener">GLB</a>' + oldTakeMarker
+        : '<span class="text-muted">-</span>';
+      var srtCell = row.glossSrtUrl
+        ? '<a href="' + escapeHtml(row.glossSrtUrl) + '" target="_blank" rel="noopener">SRT</a>'
+        : '<span class="text-muted">-</span>';
+      return (
+        '<tr>' +
+        '<td><input type="checkbox" class="form-check-input srt-row-check" data-base="' + escapeHtml(row.base) + '"' + checked + '></td>' +
+        '<td>' + escapeHtml(row.base) + '</td>' +
+        '<td>' + escapeHtml(row.zin) + '</td>' +
+        '<td>' + escapeHtml(row.thema) + '</td>' +
+        '<td>' + escapeHtml(row.takeNumber) + '</td>' +
+        '<td>' + glbCell + '</td>' +
+        '<td>' + srtCell + '</td>' +
+        '<td>' + statusBadgeHtml(row.mcp_status_tijd_annotatie) + '</td>' +
+        '</tr>'
+      );
+    }).join("");
+    tbody.innerHTML = html;
+
+    document.getElementById("srtSelectAll").checked =
+      rows.length > 0 && rows.every(function (r) { return srtSelected.has(r.base); });
+
+    Array.prototype.forEach.call(tbody.querySelectorAll(".srt-row-check"), function (cb) {
+      cb.addEventListener("change", function () {
+        var base = cb.getAttribute("data-base");
+        if (cb.checked) { srtSelected.add(base); } else { srtSelected.delete(base); }
+        updateSrtButtons(applySrtFiltersQuiet());
+        document.getElementById("srtSelectAll").checked =
+          rows.length > 0 && rows.every(function (r) { return srtSelected.has(r.base); });
+      });
+    });
+  }
+
+  // Recomputes the currently filtered set without re-rendering the table
+  // (used after a selection change, to refresh counts/buttons only).
+  function applySrtFiltersQuiet() {
+    var search = document.getElementById("srtSearch").value.trim().toLowerCase();
+    var statusFilter = document.getElementById("srtStatusFilter").value;
+    return srtAllRows.filter(function (row) {
+      if (search) {
+        var base = (row.base || "").toLowerCase();
+        var zin = (row.zin || "").toLowerCase();
+        if (base.indexOf(search) < 0 && zin.indexOf(search) < 0) { return false; }
+      }
+      if (statusFilter && statusBucket(row.mcp_status_tijd_annotatie) !== statusFilter) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  function updateSrtCounter(filteredRows) {
+    var sentenceCount = new Set(filteredRows.map(function (r) { return r.sentence_id; })).size;
+    document.getElementById("rowCounter").textContent =
+      filteredRows.length + " video's (" + sentenceCount + " zinnen)";
+  }
+
+  function updateSrtButtons(filteredRows) {
+    document.getElementById("downloadSelectedBtn").disabled = srtSelected.size === 0;
+    document.getElementById("downloadAllBtn").disabled = filteredRows.length === 0;
+  }
+
+  document.getElementById("srtSearch").addEventListener("input", applySrtFilters);
+  document.getElementById("srtStatusFilter").addEventListener("change", applySrtFilters);
+
+  document.getElementById("srtSelectAll").addEventListener("change", function () {
+    var checked = this.checked;
+    var visibleRows = applySrtFiltersQuiet();
+    visibleRows.forEach(function (r) {
+      if (checked) { srtSelected.add(r.base); } else { srtSelected.delete(r.base); }
+    });
+    renderSrtTable(visibleRows);
+    updateSrtButtons(visibleRows);
+  });
+
+  document.getElementById("downloadSelectedBtn").addEventListener("click", function () {
+    if (!srtSelected.size) { return; }
+    postBasesAsZip(Array.from(srtSelected));
+  });
+
+  document.getElementById("downloadAllBtn").addEventListener("click", function () {
+    var rows = applySrtFiltersQuiet();
+    if (!rows.length) { return; }
+    var bases = rows.map(function (r) { return r.base; });
+    postBasesAsZip(bases);
+  });
+
+  // ---------------------------------------------------------------------
+  // Tab 2: Glossen
+  // ---------------------------------------------------------------------
+
+  var glossAllRows = [];
+  var glossSort = { key: null, dir: 1 };
+
+  function loadGlossTab() {
+    clearAlerts("glossAlerts");
+    document.getElementById("glossTableBody").innerHTML =
+      '<tr><td colspan="5" class="text-center text-muted">Laden...</td></tr>';
+
+    fetch("api.php?action=glosses")
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (!data.success) {
+          throw new Error(data.error || "Onbekende fout bij het ophalen van de glossen.");
+        }
+        var categoryMap = data.categoryMap || { categories: [], glosses: {} };
+        var glossToSlug = categoryMap.glosses || {};
+        var slugToLabel = {};
+        (categoryMap.categories || []).forEach(function (c) { slugToLabel[c.slug] = c.label; });
+
+        glossAllRows = Object.keys(data.bases || {}).map(function (base) {
+          var entry = data.bases[base];
+          var slug = glossToSlug[base];
+          var label = slug && slugToLabel[slug] ? slugToLabel[slug] : "Niet ingedeeld";
+          return {
+            base: base,
+            variants: Object.keys(entry.variants || {}).join(", "),
+            count: entry.count,
+            videos: entry.videos,
+            categorySlug: slug || "",
+            categoryLabel: label
+          };
+        });
+
+        populateCategoryFilter(categoryMap.categories || []);
+        applyGlossFilters();
+      })
+      .catch(function (err) {
+        showAlert("glossAlerts", err.message || String(err));
+        document.getElementById("glossTableBody").innerHTML =
+          '<tr><td colspan="5" class="text-center text-muted">Kon de glossen niet laden.</td></tr>';
+        document.getElementById("glossCounter").textContent = "";
+      });
+  }
+
+  function populateCategoryFilter(categories) {
+    var select = document.getElementById("glossCategoryFilter");
+    var current = select.value;
+    select.innerHTML = '<option value="">Alle categorieën</option>';
+    categories.forEach(function (c) {
+      var opt = document.createElement("option");
+      opt.value = c.slug;
+      opt.textContent = c.label;
+      select.appendChild(opt);
+    });
+    select.value = current || "";
+  }
+
+  function applyGlossFilters() {
+    var search = document.getElementById("glossSearch").value.trim().toLowerCase();
+    var category = document.getElementById("glossCategoryFilter").value;
+
+    var filtered = glossAllRows.filter(function (row) {
+      if (search) {
+        var base = row.base.toLowerCase();
+        var variants = row.variants.toLowerCase();
+        if (base.indexOf(search) < 0 && variants.indexOf(search) < 0) { return false; }
+      }
+      if (category && row.categorySlug !== category) { return false; }
+      return true;
+    });
+
+    if (glossSort.key) {
+      filtered.sort(function (a, b) {
+        return (a[glossSort.key] - b[glossSort.key]) * glossSort.dir;
+      });
+    }
+
+    renderGlossTable(filtered);
+    document.getElementById("glossCounter").textContent = filtered.length + " basisglossen";
+    document.getElementById("exportCsvBtn").disabled = filtered.length === 0;
+    document.getElementById("exportJsonBtn").disabled = filtered.length === 0;
+    return filtered;
+  }
+
+  function renderGlossTable(rows) {
+    var tbody = document.getElementById("glossTableBody");
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">Geen resultaten.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(function (row) {
+      return (
+        '<tr>' +
+        '<td>' + escapeHtml(row.base) + '</td>' +
+        '<td>' + escapeHtml(row.variants) + '</td>' +
+        '<td>' + escapeHtml(row.count) + '</td>' +
+        '<td>' + escapeHtml(row.videos) + '</td>' +
+        '<td>' + escapeHtml(row.categoryLabel) + '</td>' +
+        '</tr>'
+      );
+    }).join("");
+  }
+
+  document.getElementById("glossSearch").addEventListener("input", applyGlossFilters);
+  document.getElementById("glossCategoryFilter").addEventListener("change", applyGlossFilters);
+
+  Array.prototype.forEach.call(document.querySelectorAll("th.sortable"), function (th) {
+    th.addEventListener("click", function () {
+      var key = th.getAttribute("data-sort");
+      if (glossSort.key === key) {
+        glossSort.dir = -glossSort.dir;
+      } else {
+        glossSort.key = key;
+        glossSort.dir = 1;
+      }
+      Array.prototype.forEach.call(document.querySelectorAll("th.sortable .sort-arrow"), function (span) {
+        span.textContent = "";
+      });
+      th.querySelector(".sort-arrow").textContent = glossSort.dir === 1 ? "▲" : "▼";
+      applyGlossFilters();
+    });
+  });
+
+  document.getElementById("rebuildIndexBtn").addEventListener("click", function () {
+    clearAlerts("glossAlerts");
+    var btn = this;
+    btn.disabled = true;
+    btn.textContent = "Bezig met herbouwen...";
+    fetch("api.php?action=rebuildIndex")
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (!data.success) {
+          throw new Error(data.error || "Onbekende fout bij het herbouwen van de index.");
+        }
+        return loadGlossTab();
+      })
+      .catch(function (err) {
+        showAlert("glossAlerts", err.message || String(err));
+      })
+      .finally(function () {
+        btn.disabled = false;
+        btn.textContent = "Herbouw index";
+      });
+  });
+
+  document.getElementById("exportCsvBtn").addEventListener("click", function () {
+    var rows = applyGlossFilters();
+    var header = ["base", "variants", "count", "videos", "category"].join(",");
+    var lines = rows.map(function (row) {
+      return [
+        csvCell(row.base),
+        csvCell(row.variants),
+        csvCell(row.count),
+        csvCell(row.videos),
+        csvCell(row.categoryLabel)
+      ].join(",");
+    });
+    var csv = [header].concat(lines).join("\r\n");
+    downloadBlob("blendBaking_glossen.csv", csv, "text/csv;charset=utf-8");
+  });
+
+  document.getElementById("exportJsonBtn").addEventListener("click", function () {
+    var rows = applyGlossFilters();
+    var payload = rows.map(function (row) {
+      return {
+        base: row.base,
+        variants: row.variants,
+        count: row.count,
+        videos: row.videos,
+        category: row.categoryLabel
+      };
+    });
+    downloadBlob("blendBaking_glossen.json", JSON.stringify(payload, null, 2), "application/json;charset=utf-8");
+  });
+
+  // ---------------------------------------------------------------------
+  // Init
+  // ---------------------------------------------------------------------
+
+  loadSrtTab();
+
+  var glossLoaded = false;
+  document.getElementById("gloss-tab").addEventListener("shown.bs.tab", function () {
+    if (!glossLoaded) {
+      glossLoaded = true;
+      loadGlossTab();
+    }
+  });
+
+})();
+</script>
+</body>
+</html>
