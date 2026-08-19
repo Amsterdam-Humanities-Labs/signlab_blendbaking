@@ -83,6 +83,35 @@ class TestSrtGloss {
         $this->assertEquals([], $agg['bases'], "no bases from a missing file");
     }
 
+    public function testSafeBaseAcceptsRealBases() {
+        require_once __DIR__ . '/../api.php';
+        $this->assertEquals('M20240925_1824', bb_safe_base('M20240925_1824'), "ordinary zin base");
+        $this->assertEquals('#A_241120_0', bb_safe_base('#A_241120_0'), "base with hash and digits");
+    }
+
+    public function testSafeBaseRejectsTraversal() {
+        require_once __DIR__ . '/../api.php';
+        $this->assertEquals(null, bb_safe_base('../../etc/passwd'), "parent traversal");
+        $this->assertEquals(null, bb_safe_base('..%2fetc%2fpasswd'), "encoded traversal");
+        $this->assertEquals(null, bb_safe_base('/etc/passwd'), "absolute path");
+        $this->assertEquals(null, bb_safe_base('M2024 1824'), "space is not allowed");
+        $this->assertEquals(null, bb_safe_base(''), "empty base");
+        $this->assertEquals(null, bb_safe_base('M2024/1824'), "slash is not allowed");
+    }
+
+    public function testSrtPathStaysInsideEafDir() {
+        require_once __DIR__ . '/../api.php';
+        $this->assertEquals(null, bb_srt_path('../../etc/passwd'), "traversal yields no path");
+        $this->assertEquals(null, bb_srt_path('definitely_not_a_real_base_xyz'), "nonexistent yields no path");
+
+        // A base known to exist from the live measurement.
+        $p = bb_srt_path('M20240828_0037');
+        $this->assertTrue(
+            is_string($p) && strpos($p, '/web/zin/eaf/zin/') === 0,
+            "a real base resolves inside the SRT directory"
+        );
+    }
+
     public function runTests() {
         foreach (get_class_methods($this) as $m) {
             if (strpos($m, 'test') === 0) { $this->$m(); }
