@@ -1,0 +1,9 @@
+# Deny all direct web access to the test suite. TestRunner.php's fixture
+# helper shell_exec()s `php -S ... &` and `kill` to stand up a throwaway PHP
+# server for each test run; an anonymous HTTP request to this file makes the
+# web server itself spawn and kill processes as www-data, and an aborted
+# request orphans the listener. Must only ever be run from the CLI (php
+# tests/TestRunner.php). Matches the house pattern used in
+# /web/animMIDI/.htaccess.
+Order allow,deny
+Deny from all

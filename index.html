@@ -210,25 +210,42 @@
     document.getElementById(containerId).innerHTML = "";
   }
 
-  // Submits a POST form (so long base lists survive) targeting the given
-  // action, with one hidden bases[] input per base. The response carries a
-  // Content-Disposition: attachment header, so the browser downloads it
-  // without navigating away from this page.
+  // POSTs a single comma-joined `bases` field via fetch, rather than a form
+  // with one hidden bases[] input per base. A form POST is silently truncated
+  // by PHP's max_input_vars (1000 on this host) *before* api.php ever runs,
+  // which defeats bb_stream_zip's own TRUNCATED.txt protection outright — the
+  // excess bases never arrive to be counted as excess. api.php's zip action
+  // already accepts a comma-separated `bases` string, so no server change is
+  // needed. This also keeps a JSON error response (e.g. "no valid files")
+  // in-page instead of navigating the user to a raw JSON blob, which a form
+  // POST would do.
   function postBasesAsZip(bases) {
-    var form = document.createElement("form");
-    form.method = "POST";
-    form.action = "api.php?action=zip";
-    form.style.display = "none";
-    bases.forEach(function (base) {
-      var input = document.createElement("input");
-      input.type = "hidden";
-      input.name = "bases[]";
-      input.value = base;
-      form.appendChild(input);
-    });
-    document.body.appendChild(form);
-    form.submit();
-    document.body.removeChild(form);
+    clearAlerts("srtAlerts");
+    return fetch("api.php?action=zip", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "bases=" + encodeURIComponent(bases.join(","))
+    })
+      .then(function (res) {
+        var contentType = res.headers.get("Content-Type") || "";
+        if (contentType.indexOf("application/json") >= 0) {
+          return res.json().then(function (data) {
+            throw new Error(data.error || "Onbekende fout bij het downloaden.");
+          });
+        }
+        if (!res.ok) {
+          throw new Error("Downloaden mislukt (statuscode " + res.status + ").");
+        }
+        var disposition = res.headers.get("Content-Disposition") || "";
+        var match = /filename="([^"]+)"/.exec(disposition);
+        var filename = match ? match[1] : "blendBaking_glossen.zip";
+        return res.blob().then(function (blob) {
+          downloadBlob(filename, blob, "application/zip");
+        });
+      })
+      .catch(function (err) {
+        showAlert("srtAlerts", err.message || String(err));
+      });
   }
 
   function downloadBlob(filename, content, mime) {

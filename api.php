@@ -114,8 +114,11 @@ function bb_glosses($force = false) {
     $res = bb_fetch_videos(['baked' => '1', 'hasGloss' => '1', 'limit' => 500, 'page' => 1]);
     if (empty($res['success'])) { return $res; }
 
-    $rows = $res['videos'];
-    $total = (int)$res['total'];
+    // Match dump_base_glosses.php's guard: upstream can return success:true
+    // with no 'videos'/'total' key, and a plain ['videos'] / (int)$res['total']
+    // would raise a PHP 8 TypeError (uncaught 500) in that case.
+    $rows = $res['videos'] ?? [];
+    $total = (int)($res['total'] ?? 0);
     $page = 2;
     while (count($rows) < $total) {
         $next = bb_fetch_videos(['baked' => '1', 'hasGloss' => '1', 'limit' => 500, 'page' => $page]);
@@ -132,7 +135,7 @@ function bb_glosses($force = false) {
                 'partial' => true,
             ];
         }
-        if (!count($next['videos'])) {
+        if (empty($next['videos'])) {
             // Upstream succeeded but had nothing left before reaching $total
             // — data can legitimately change between paged calls. Not an
             // error; stop paging cleanly.

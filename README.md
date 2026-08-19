@@ -58,6 +58,16 @@ All actions except `zip` respond with JSON. `zip` streams a file.
   and a `TRUNCATED.txt` manifest is added inside the archive — there is no
   reliable way to signal truncation via headers on a file-download response, so
   the archive itself carries the warning.
+  `index.html` sends this as a single comma-joined `bases` field via `fetch`,
+  not a per-base form field: a form POST with one hidden `bases[]` input per
+  base is silently truncated by PHP's `max_input_vars` (1000 on this host)
+  *before* `api.php` ever runs, which defeats the `TRUNCATED.txt` protection
+  outright — the excess bases never arrive to be counted as excess. A single
+  field has no such limit regardless of how many bases it lists. The `fetch`
+  response is also checked by `Content-Type`: a JSON body is rendered in the
+  page's alert; a ZIP blob triggers a client-side download — a plain form POST
+  to a JSON error response would instead navigate the user away to a raw JSON
+  blob.
 - **`rebuildIndex`** — forces the gloss index cache to rebuild (equivalent to
   `glosses&refresh=1`) and returns just `{success, bases, files}`. What the
   "Herbouw index" button calls.
@@ -76,6 +86,13 @@ partial fetch must never be served as if it were the whole corpus.
 
 `cache/` is git-ignored; deleting it is always safe; it repopulates on the next
 request that needs it (or immediately on `refresh=1` / `rebuildIndex`).
+
+`cache/` must be group-writable by `www-data` (the Apache worker user) —
+`@file_put_contents(BB_CACHE, ...)` fails silently otherwise (the `@`
+suppresses the warning), and every request then re-reads and re-aggregates
+all gloss SRTs from disk instead of hitting the cache. `chgrp www-data cache
+&& chmod 775 cache` (or equivalent) is enough; matches `/web/zin/cache`'s
+`www-data:www-data 755`.
 
 ## Regenerating `categories.json`
 
@@ -138,6 +155,13 @@ php tests/TestRunner.php
 Runs `TestSrtGloss` (cue parsing, base-gloss folding, aggregation) and
 `TestCategories` (the categorization pattern rules, and cross-checks against
 `categories.json` itself). Exit code is 0 iff every test passed.
+
+`tests/` and `scripts/` both carry a `.htaccess` denying all web access —
+CLI-only. `TestRunner.php`'s fixture helper `shell_exec`s `php -S ... &` and
+`kill` to stand up a throwaway PHP server per test run; an anonymous HTTP
+request to it would make the web server itself spawn and kill processes as
+`www-data`, and an aborted request would orphan the listener. Do not remove
+that `.htaccess` to "make tests browsable" — run them from the CLI instead.
 
 ## Environment constraints
 

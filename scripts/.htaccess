@@ -1,0 +1,7 @@
+# Deny all direct web access to these maintenance scripts. They are meant to
+# be run only from the CLI (php scripts/dump_base_glosses.php, php
+# scripts/find_uncategorized.php); today they only fail over HTTP by the
+# accident of $argv being undefined under the web SAPI, which is not a real
+# protection. Matches the house pattern used in /web/animMIDI/.htaccess.
+Order allow,deny
+Deny from all
