@@ -91,7 +91,7 @@ if (!defined('BB_CACHE_TTL')) define('BB_CACHE_TTL', 600);
 // self-healing guard mocap_get_index uses in mocapFiles.php — so a cache
 // written by older code is rebuilt instead of silently trusted with fields
 // missing.
-if (!defined('BB_INDEX_SCHEMA')) define('BB_INDEX_SCHEMA', 1);
+if (!defined('BB_INDEX_SCHEMA')) define('BB_INDEX_SCHEMA', 2);
 
 /**
  * Aggregate glosses for the baked videos, cached to BB_CACHE.

@@ -287,6 +287,73 @@ PHP
         unlink($tmp);
     }
 
+    public function testCueEntriesCaptureStartTimecodes() {
+        $srt = "1\n00:00:01,975 --> 00:00:02,871\nDOEN-C\n\n2\n00:00:03,044 --> 00:00:03,277\nDOEN-A\n";
+        $entries = srt_cue_entries($srt);
+        $this->assertEquals(2, count($entries), "two cue entries");
+        $this->assertEquals('DOEN-C', $entries[0]['text'], "first cue text");
+        $this->assertEquals('00:00:01,975', $entries[0]['start'], "first cue start timecode");
+        $this->assertEquals('DOEN-A', $entries[1]['text'], "second cue text");
+        $this->assertEquals('00:00:03,044', $entries[1]['start'], "second cue start timecode");
+    }
+
+    public function testCueEntriesHandleCrlfAndEdgeCues() {
+        $srt = "1\r\n00:00:02,117 --> 00:00:02,173\r\nPT-1hand:1\r\n\r\n"
+             . "2\r\n00:00:04,000 --> 00:00:05,000\r\nMOVE+Baby_snavel\r\n\r\n"
+             . "3\r\n00:00:06,500 --> 00:00:07,000\r\n#J\r\n";
+        $entries = srt_cue_entries($srt);
+        $this->assertEquals(3, count($entries), "CRLF file yields three entries");
+        $this->assertEquals('PT-1hand:1', $entries[0]['text'], "colon cue survives");
+        $this->assertEquals('00:00:02,117', $entries[0]['start'], "CRLF start timecode");
+        $this->assertEquals('MOVE+Baby_snavel', $entries[1]['text'], "underscore classifier survives");
+        $this->assertEquals('#J', $entries[2]['text'], "fingerspelling survives");
+        $this->assertEquals('00:00:06,500', $entries[2]['start'], "third start timecode");
+    }
+
+    public function testCueEntriesLeaveStartNullWhenNoTimecodePrecedes() {
+        // A cue line with no preceding timecode must still be captured, with a null start.
+        $entries = srt_cue_entries("STRAY-A\n");
+        $this->assertEquals(1, count($entries), "stray cue still captured");
+        $this->assertEquals('STRAY-A', $entries[0]['text'], "stray cue text");
+        $this->assertEquals(null, $entries[0]['start'], "stray cue has no start timecode");
+    }
+
+    public function testCuesStillReturnsPlainStrings() {
+        // srt_cues() is a public contract; adding timings must not change it.
+        $srt = "1\n00:00:01,975 --> 00:00:02,871\nDOEN-C\n\n2\n00:00:03,044 --> 00:00:03,277\nDOEN-A\n";
+        $this->assertEquals(['DOEN-C', 'DOEN-A'], srt_cues($srt), "srt_cues unchanged");
+        $this->assertEquals([], srt_cues(''), "empty file still yields no cues");
+    }
+
+    public function testAggregateRecordsOccurrencesWithVideoStartAndCue() {
+        $tmp = sys_get_temp_dir() . '/srtocc_' . getmypid();
+        @mkdir($tmp, 0777, true);
+        // AAP appears TWICE in file A (as two variants) and once in file B.
+        file_put_contents($tmp . '/A.srt',
+            "1\n00:00:01,000 --> 00:00:02,000\nAAP-A\n\n2\n00:00:05,500 --> 00:00:06,000\nAAP-B\n");
+        file_put_contents($tmp . '/B.srt',
+            "1\n00:00:03,250 --> 00:00:04,000\nAAP-A\n\n2\n00:00:08,000 --> 00:00:09,000\nBOEK\n");
+
+        $agg = gloss_aggregate(['A' => $tmp . '/A.srt', 'B' => $tmp . '/B.srt']);
+        $aap = $agg['bases']['AAP'];
+
+        $this->assertEquals(3, $aap['count'], "AAP occurs three times");
+        $this->assertEquals(2, $aap['videos'], "AAP appears in two videos");
+        $this->assertEquals(3, count($aap['occurrences']), "one occurrence entry per cue instance");
+
+        $this->assertEquals('A', $aap['occurrences'][0]['video'], "first occurrence video");
+        $this->assertEquals('00:00:01,000', $aap['occurrences'][0]['start'], "first occurrence start");
+        $this->assertEquals('AAP-A', $aap['occurrences'][0]['cue'], "first occurrence keeps the exact variant");
+        $this->assertEquals('AAP-B', $aap['occurrences'][1]['cue'], "second occurrence is the other variant");
+        $this->assertEquals('A', $aap['occurrences'][1]['video'], "both A occurrences share the video");
+        $this->assertEquals('B', $aap['occurrences'][2]['video'], "third occurrence is the other video");
+        $this->assertEquals('00:00:03,250', $aap['occurrences'][2]['start'], "third occurrence start");
+
+        $this->assertEquals(1, count($agg['bases']['BOEK']['occurrences']), "BOEK has one occurrence");
+
+        unlink($tmp . '/A.srt'); unlink($tmp . '/B.srt'); rmdir($tmp);
+    }
+
     public function runTests() {
         foreach (get_class_methods($this) as $m) {
             if (strpos($m, 'test') === 0) { $this->$m(); }

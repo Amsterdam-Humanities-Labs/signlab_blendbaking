@@ -23,6 +23,18 @@ script, direct disk access to `zin`'s EAF directory (see below).
   variants, and its category. Has a "Herbouw index" (rebuild index) button and
   CSV/JSON export.
 
+  Each gloss row expands. The panel lists every sentence containing that gloss
+  — the video's base filename, the sentence text, its thema, the exact cue and
+  start timecode of each occurrence (`AAP-A @ 00:00:01,470`), and SRT and GLB
+  links — plus a button that ZIPs the gloss SRTs of just those sentences.
+
+  A gloss signed twice in one sentence appears once in the panel with both
+  timecodes listed. GLBs are linked per row rather than bundled: `PT-1hand`
+  spans 427 videos, so a GLB archive for it would run to roughly 100 MB.
+
+  The panel needs no extra endpoint — it joins the `occurrences` list from
+  `action=glosses` against the video rows the SRT tab has already loaded.
+
 All row data in both tabs ultimately comes from one upstream endpoint:
 `GET https://signcollect.nl/zin/getZinnen.php?action=listMocapFiles`. blendBaking
 never queries the database directly and never re-derives baked/gloss status

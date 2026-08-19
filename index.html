@@ -41,6 +41,12 @@
     color: #6c757d;
     cursor: help;
   }
+    .gloss-toggle { text-decoration: none; font-weight: 500; }
+    .gloss-toggle:hover { text-decoration: underline; }
+    .gloss-caret { display: inline-block; width: 1em; color: #6c757d; }
+    .gloss-detail { background-color: #f8f9fa; border-top: 1px solid #dee2e6; }
+    .gloss-detail-row > td { border-top: 0; }
+
   #rowCounter, #glossCounter {
     font-weight: 500;
   }
@@ -219,8 +225,9 @@
   // needed. This also keeps a JSON error response (e.g. "no valid files")
   // in-page instead of navigating the user to a raw JSON blob, which a form
   // POST would do.
-  function postBasesAsZip(bases) {
-    clearAlerts("srtAlerts");
+  function postBasesAsZip(bases, alertTarget) {
+    alertTarget = alertTarget || "srtAlerts";
+    clearAlerts(alertTarget);
     return fetch("api.php?action=zip", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -244,7 +251,7 @@
         });
       })
       .catch(function (err) {
-        showAlert("srtAlerts", err.message || String(err));
+        showAlert(alertTarget, err.message || String(err));
       });
   }
 
@@ -317,7 +324,7 @@
         applySrtFilters();
       })
       .catch(function (err) {
-        showAlert("srtAlerts", err.message || String(err));
+        showAlert(alertTarget, err.message || String(err));
         document.getElementById("srtTableBody").innerHTML =
           '<tr><td colspan="8" class="text-center text-muted">Kon de lijst niet laden.</td></tr>';
         document.getElementById("rowCounter").textContent = "";
@@ -481,6 +488,7 @@
 
   var glossAllRows = [];
   var glossSort = { key: null, dir: 1 };
+  var glossExpanded = new Set();
 
   function loadGlossTab() {
     clearAlerts("glossAlerts");
@@ -508,7 +516,8 @@
             count: entry.count,
             videos: entry.videos,
             categorySlug: slug || "",
-            categoryLabel: label
+            categoryLabel: label,
+            occurrences: entry.occurrences || []
           };
         });
 
@@ -579,17 +588,124 @@
       return;
     }
     tbody.innerHTML = rows.map(function (row) {
+      var open = glossExpanded.has(row.base);
       return (
         '<tr>' +
-        '<td>' + escapeHtml(row.base) + '</td>' +
+        '<td><button type="button" class="btn btn-link p-0 gloss-toggle" ' +
+          'data-base="' + escapeHtml(row.base) + '" ' +
+          'aria-expanded="' + (open ? 'true' : 'false') + '">' +
+          '<span class="gloss-caret">' + (open ? '&#9662;' : '&#9656;') + '</span> ' +
+          escapeHtml(row.base) +
+        '</button></td>' +
         '<td>' + escapeHtml(row.variants) + '</td>' +
         '<td>' + escapeHtml(row.count) + '</td>' +
         '<td>' + escapeHtml(row.videos) + '</td>' +
         '<td>' + escapeHtml(row.categoryLabel) + '</td>' +
-        '</tr>'
+        '</tr>' +
+        (open
+          ? '<tr class="gloss-detail-row"><td colspan="5" class="p-0">' +
+              renderGlossDetail(row) +
+            '</td></tr>'
+          : '')
       );
     }).join("");
   }
+
+  // Which videos contain a gloss, joined against the SRT tab's already-loaded
+  // rows so no extra endpoint is needed. Occurrences are grouped per video, so
+  // a gloss signed twice in one sentence shows one row with both timecodes.
+  function renderGlossDetail(row) {
+    var byVideo = {};
+    var order = [];
+    (row.occurrences || []).forEach(function (occ) {
+      if (!byVideo[occ.video]) { byVideo[occ.video] = []; order.push(occ.video); }
+      byVideo[occ.video].push(occ);
+    });
+
+    if (!order.length) {
+      return '<div class="p-3 text-muted">Geen zinnen gevonden voor dit gloss.</div>';
+    }
+
+    var lookup = {};
+    srtAllRows.forEach(function (r) { lookup[r.base] = r; });
+
+    var body = order.map(function (videoBase) {
+      var meta = lookup[videoBase];
+      var times = byVideo[videoBase].map(function (o) {
+        return escapeHtml(o.cue) + (o.start ? ' @ ' + escapeHtml(o.start) : '');
+      }).join('<br>');
+
+      var zin = meta && meta.zin
+        ? escapeHtml(meta.zin)
+        : '<span class="text-muted">(zin niet geladen)</span>';
+      var thema = meta && meta.thema ? escapeHtml(meta.thema) : '';
+
+      var oldTakeMarker = meta && meta.glbIsLatestTake === false
+        ? ' <span class="old-take-marker" title="Deze GLB komt van een oudere take dan de nieuwste opname.">&#9888;</span>'
+        : '';
+      var glbCell = meta && meta.glbUrl
+        ? '<a href="' + escapeHtml(meta.glbUrl) + '" target="_blank" rel="noopener">GLB</a>' + oldTakeMarker
+        : '<span class="text-muted">-</span>';
+      var srtCell = meta && meta.glossSrtUrl
+        ? '<a href="' + escapeHtml(meta.glossSrtUrl) + '" target="_blank" rel="noopener">SRT</a>'
+        : '<span class="text-muted">-</span>';
+
+      return '<tr>' +
+        '<td>' + escapeHtml(videoBase) + '</td>' +
+        '<td>' + zin + '</td>' +
+        '<td>' + thema + '</td>' +
+        '<td class="text-nowrap">' + times + '</td>' +
+        '<td>' + srtCell + '</td>' +
+        '<td>' + glbCell + '</td>' +
+        '</tr>';
+    }).join("");
+
+    return '' +
+      '<div class="gloss-detail p-3">' +
+        '<div class="d-flex align-items-center gap-2 mb-2">' +
+          '<button type="button" class="btn btn-sm btn-primary gloss-zip" ' +
+            'data-base="' + escapeHtml(row.base) + '">' +
+            'Download SRT\'s (' + order.length + ')' +
+          '</button>' +
+          '<span class="text-muted small">' + order.length + " zin" + (order.length === 1 ? "" : "nen") +
+            ' met dit gloss</span>' +
+        '</div>' +
+        '<div class="table-responsive">' +
+          '<table class="table table-sm table-bordered mb-0">' +
+            '<thead><tr>' +
+              '<th>Bestand</th><th>Zin</th><th>Thema</th><th>Voorkomen</th><th>SRT</th><th>GLB</th>' +
+            '</tr></thead>' +
+            '<tbody>' + body + '</tbody>' +
+          '</table>' +
+        '</div>' +
+      '</div>';
+  }
+
+  // Expand/collapse and per-gloss ZIP, delegated so re-rendering keeps working.
+  document.getElementById("glossTableBody").addEventListener("click", function (ev) {
+    var toggle = ev.target.closest(".gloss-toggle");
+    if (toggle) {
+      var base = toggle.getAttribute("data-base");
+      if (glossExpanded.has(base)) { glossExpanded.delete(base); } else { glossExpanded.add(base); }
+      // The SRT rows supply the sentence text; wait for them the first time.
+      srtLoadPromise.then(function () { renderGlossTable(computeFilteredGlossRows()); });
+      return;
+    }
+    var zipBtn = ev.target.closest(".gloss-zip");
+    if (zipBtn) {
+      var zipBase = zipBtn.getAttribute("data-base");
+      var match = glossAllRows.filter(function (r) { return r.base === zipBase; })[0];
+      if (!match) { return; }
+      var bases = [];
+      var seen = {};
+      (match.occurrences || []).forEach(function (o) {
+        if (!seen[o.video]) { seen[o.video] = true; bases.push(o.video); }
+      });
+      if (!bases.length) { return; }
+      zipBtn.disabled = true;
+      postBasesAsZip(bases, "glossAlerts").then(function () { zipBtn.disabled = false; });
+    }
+  });
 
   document.getElementById("glossSearch").addEventListener("input", applyGlossFilters);
   document.getElementById("glossCategoryFilter").addEventListener("change", applyGlossFilters);
@@ -667,7 +783,7 @@
   // Init
   // ---------------------------------------------------------------------
 
-  loadSrtTab();
+  var srtLoadPromise = loadSrtTab();
 
   var glossLoaded = false;
   document.getElementById("gloss-tab").addEventListener("shown.bs.tab", function () {
