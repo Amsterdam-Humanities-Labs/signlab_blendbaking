@@ -11,13 +11,35 @@ require_once __DIR__ . '/../srtGloss.php';
 require_once __DIR__ . '/../api.php';
 
 $args = implode(' ', array_slice($argv, 1));
-$dump = shell_exec('php ' . escapeshellarg(__DIR__ . '/dump_base_glosses.php') . ' ' . $args . ' 2>/dev/null');
+$cmd = 'php ' . escapeshellarg(__DIR__ . '/dump_base_glosses.php');
+if ($args !== '') { $cmd .= ' ' . $args; }
+
+// exec() leaves the child's stderr attached to ours and hands back its exit
+// status. Both matter: this exit code is the only verification this task has,
+// so a dump that dies must never be mistaken for a corpus with nothing missing.
+$lines = [];
+$status = 0;
+exec($cmd, $lines, $status);
+
+if ($status !== 0) {
+    fwrite(STDERR, "dump_base_glosses.php exited with status $status\n");
+    exit(1);
+}
 
 $corpus = [];
-foreach (explode("\n", trim((string)$dump)) as $line) {
+foreach ($lines as $line) {
+    $line = rtrim($line, "\r\n");
     if ($line === '') { continue; }
     $parts = explode("\t", $line);
     $corpus[$parts[0]] = (int)($parts[1] ?? 0);
+}
+
+// An empty corpus makes every completeness check vacuously true. Treat it as
+// a broken scan (BB_EAF_DIR gone, rclone mount down, upstream fetch failed),
+// never as success.
+if (!count($corpus)) {
+    fwrite(STDERR, "dump produced no glosses: corpus scan or upstream fetch failed\n");
+    exit(1);
 }
 
 $cat = bb_categories();

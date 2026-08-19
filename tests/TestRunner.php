@@ -7,8 +7,9 @@ error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
 require_once __DIR__ . '/TestSrtGloss.php';
+require_once __DIR__ . '/TestCategories.php';
 
-$classes = ['TestSrtGloss'];
+$classes = ['TestSrtGloss', 'TestCategories'];
 $totalPassed = 0; $totalFailed = 0;
 
 foreach ($classes as $class) {
