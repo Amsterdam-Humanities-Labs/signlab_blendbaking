@@ -112,6 +112,181 @@ class TestSrtGloss {
         );
     }
 
+    /**
+     * Run bb_glosses() against a throwaway PHP-built-in-server fixture, in a
+     * fresh subprocess so BB_ZIN_API / BB_CACHE can be redefined without
+     * disturbing the real upstream or the shared cache file used elsewhere.
+     *
+     * $upstreamBody is the full <?php ... source of a router script that
+     * answers listMocapFiles-shaped requests (keyed on $_GET['page']).
+     * Returns the decoded ['has_error' => bool, 'error' => ?string,
+     * 'cache_exists' => bool] reported by the subprocess, or null if the
+     * fixture server never came up.
+     */
+    private function bbRunAgainstFakeUpstream($upstreamBody) {
+        $tmpDir = sys_get_temp_dir() . '/bbfake_' . getmypid() . '_' . mt_rand(1000, 9999);
+        mkdir($tmpDir, 0777, true);
+        $router = $tmpDir . '/router.php';
+        file_put_contents($router, $upstreamBody);
+        $cacheFile = $tmpDir . '/cache.json';
+
+        $port = mt_rand(20000, 60000);
+        shell_exec(sprintf(
+            'php -S 127.0.0.1:%d %s > %s 2>&1 & echo $! > %s',
+            $port, escapeshellarg($router), escapeshellarg($tmpDir . '/server.log'), escapeshellarg($tmpDir . '/server.pid')
+        ));
+
+        // Preflight: wait for the dev server to actually accept connections
+        // before trusting the test to exercise the real branch under test,
+        // rather than a connection-refused error that would coincidentally
+        // still look like "an error was reported".
+        $up = false;
+        for ($i = 0; $i < 20; $i++) {
+            $probe = @file_get_contents("http://127.0.0.1:$port/router.php?page=1");
+            if ($probe !== false && $probe !== '') { $up = true; break; }
+            usleep(100000);
+        }
+
+        $result = null;
+        if ($up) {
+            $runner = $tmpDir . '/runner.php';
+            file_put_contents($runner, sprintf(<<<'PHP'
+<?php
+define('BB_ZIN_API', %s);
+define('BB_CACHE', %s);
+require %s;
+$agg = bb_glosses(true);
+echo json_encode([
+    'has_error'    => isset($agg['error']),
+    'error'        => $agg['error'] ?? null,
+    'cache_exists' => file_exists(BB_CACHE),
+]);
+PHP
+                ,
+                var_export("http://127.0.0.1:$port/router.php", true),
+                var_export($cacheFile, true),
+                var_export(__DIR__ . '/../api.php', true)
+            ));
+            $out = shell_exec('php ' . escapeshellarg($runner) . ' 2>&1');
+            $result = json_decode($out, true);
+        }
+
+        $pid = trim(@file_get_contents($tmpDir . '/server.pid'));
+        if ($pid !== '' && ctype_digit($pid)) { @shell_exec('kill ' . $pid . ' 2>/dev/null'); }
+        foreach (glob($tmpDir . '/*') as $f) { @unlink($f); }
+        @rmdir($tmpDir);
+
+        return $result;
+    }
+
+    public function testGlossesReportsFailureAndDoesNotCacheOnPartialPageFailure() {
+        require_once __DIR__ . '/../api.php';
+        // Page 1 succeeds but reports more total rows than it returns, forcing
+        // a second page; page 2 fails outright (HTTP 500). bb_glosses must
+        // treat that as a hard error, not silently proceed on the partial set.
+        $result = $this->bbRunAgainstFakeUpstream(<<<'PHP'
+<?php
+header('Content-Type: application/json');
+$page = (int)($_GET['page'] ?? 1);
+if ($page === 1) {
+    echo json_encode(['success' => true, 'total' => 6, 'videos' => [
+        ['base' => 'X1', 'hasGloss' => false],
+        ['base' => 'X2', 'hasGloss' => false],
+        ['base' => 'X3', 'hasGloss' => false],
+    ]]);
+} else {
+    http_response_code(500);
+    echo json_encode(['success' => false, 'error' => 'simulated failure']);
+}
+PHP
+        );
+        $this->assertTrue(is_array($result), "fixture ran and returned JSON: " . var_export($result, true));
+        if (is_array($result)) {
+            $this->assertTrue($result['has_error'] === true, "a mid-pagination upstream failure is reported as an error");
+            $this->assertTrue($result['cache_exists'] === false, "a partial result must not be written to the cache");
+        }
+    }
+
+    public function testGlossesStopsCleanlyWhenUpstreamHasFewerRowsThanTotal() {
+        require_once __DIR__ . '/../api.php';
+        // Page 1 again promises 6 total but only 3 rows exist anywhere; page 2
+        // succeeds with zero rows (data changed between calls, not a failure).
+        // bb_glosses must terminate the loop cleanly and still cache the result.
+        $result = $this->bbRunAgainstFakeUpstream(<<<'PHP'
+<?php
+header('Content-Type: application/json');
+$page = (int)($_GET['page'] ?? 1);
+if ($page === 1) {
+    echo json_encode(['success' => true, 'total' => 6, 'videos' => [
+        ['base' => 'X1', 'hasGloss' => false],
+        ['base' => 'X2', 'hasGloss' => false],
+        ['base' => 'X3', 'hasGloss' => false],
+    ]]);
+} else {
+    echo json_encode(['success' => true, 'videos' => []]);
+}
+PHP
+        );
+        $this->assertTrue(is_array($result), "fixture ran and returned JSON: " . var_export($result, true));
+        if (is_array($result)) {
+            $this->assertTrue($result['has_error'] === false, "fewer upstream rows than total is not treated as an error");
+            $this->assertTrue($result['cache_exists'] === true, "a clean, if short, result is still cached");
+        }
+    }
+
+    public function testZipTruncationAddsManifestWhenCapExceeded() {
+        require_once __DIR__ . '/../api.php';
+        $tmpDir = sys_get_temp_dir() . '/bbzip_' . getmypid() . '_' . mt_rand(1000, 9999);
+        mkdir($tmpDir, 0777, true);
+        $out = $tmpDir . '/out.zip';
+        $runner = $tmpDir . '/runner.php';
+        file_put_contents($runner, sprintf(<<<'PHP'
+<?php
+define('BB_MAX_ZIP', 1);
+require %s;
+ob_start();
+bb_stream_zip(['M20240828_0037', 'M20240828_0039']);
+file_put_contents(%s, ob_get_clean());
+PHP
+            , var_export(__DIR__ . '/../api.php', true), var_export($out, true)
+        ));
+        shell_exec('php ' . escapeshellarg($runner) . ' 2>&1');
+
+        $zip = new ZipArchive();
+        $opened = ($zip->open($out) === true);
+        $this->assertTrue($opened, "a truncated request still produces a valid zip archive");
+        if ($opened) {
+            $manifest = $zip->getFromName('TRUNCATED.txt');
+            $this->assertTrue($manifest !== false, "TRUNCATED.txt is present when BB_MAX_ZIP is exceeded");
+            $this->assertTrue(strpos($manifest, 'Opgevraagd: 2 basissen') !== false, "manifest states how many bases were requested");
+            $this->assertTrue(strpos($manifest, 'Opgenomen: 1 basissen') !== false, "manifest states how many were included");
+            $this->assertTrue(strpos($manifest, 'Limiet') !== false, "manifest names the cap");
+            $zip->close();
+        }
+
+        foreach (glob($tmpDir . '/*') as $f) { @unlink($f); }
+        @rmdir($tmpDir);
+    }
+
+    public function testZipHasNoManifestWhenNotTruncated() {
+        require_once __DIR__ . '/../api.php';
+        ob_start();
+        bb_stream_zip(['M20240828_0037', 'M20240828_0039']);
+        $raw = ob_get_clean();
+
+        $tmp = sys_get_temp_dir() . '/bbzip_notrunc_' . getmypid() . '.zip';
+        file_put_contents($tmp, $raw);
+        $zip = new ZipArchive();
+        $opened = ($zip->open($tmp) === true);
+        $this->assertTrue($opened, "produces a valid zip");
+        if ($opened) {
+            $this->assertEquals(2, $zip->numFiles, "exactly the two requested SRTs, no manifest, when nothing was truncated");
+            $this->assertTrue($zip->getFromName('TRUNCATED.txt') === false, "no manifest when nothing was truncated");
+            $zip->close();
+        }
+        unlink($tmp);
+    }
+
     public function runTests() {
         foreach (get_class_methods($this) as $m) {
             if (strpos($m, 'test') === 0) { $this->$m(); }

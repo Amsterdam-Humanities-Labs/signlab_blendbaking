@@ -11,12 +11,16 @@
 
 require_once __DIR__ . '/srtGloss.php';
 
-define('BB_EAF_DIR',    '/web/zin/eaf/zin/');
-define('BB_SRT_SUFFIX', '_Signbank_ID_glossen.srt');
-define('BB_ZIN_API',    'https://signcollect.nl/zin/getZinnen.php');
-define('BB_CACHE',      __DIR__ . '/cache/gloss_index.json');
-define('BB_CATEGORIES', __DIR__ . '/categories.json');
-define('BB_MAX_ZIP',    2000);
+// Guarded like mocapFiles.php's MOCAP_* constants: a plain define() would
+// warn (and lose) on a second define, so tests that need an isolated
+// upstream, cache path or cap pre-define these before requiring this file.
+// Production never pre-defines them, so behaviour is unchanged there.
+if (!defined('BB_EAF_DIR'))    define('BB_EAF_DIR',    '/web/zin/eaf/zin/');
+if (!defined('BB_SRT_SUFFIX')) define('BB_SRT_SUFFIX', '_Signbank_ID_glossen.srt');
+if (!defined('BB_ZIN_API'))    define('BB_ZIN_API',    'https://signcollect.nl/zin/getZinnen.php');
+if (!defined('BB_CACHE'))      define('BB_CACHE',      __DIR__ . '/cache/gloss_index.json');
+if (!defined('BB_CATEGORIES')) define('BB_CATEGORIES', __DIR__ . '/categories.json');
+if (!defined('BB_MAX_ZIP'))    define('BB_MAX_ZIP',    2000);
 
 /**
  * Validate a video base filename. Returns the base, or null if unsafe.
@@ -64,25 +68,47 @@ function bb_fetch_videos($query) {
     ]);
     $body = curl_exec($ch);
     $err  = curl_error($ch);
+    $code = curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
     curl_close($ch);
 
     if ($body === false) {
-        return ['success' => false, 'error' => 'Upstream request failed: ' . $err];
+        return ['success' => false, 'error' => 'Upstream-aanvraag mislukt: ' . $err];
+    }
+    if ($code !== 200) {
+        return ['success' => false, 'error' => 'Upstream gaf statuscode ' . $code . ' terug'];
     }
     $decoded = json_decode($body, true);
     if (!is_array($decoded)) {
-        return ['success' => false, 'error' => 'Upstream returned invalid JSON'];
+        return ['success' => false, 'error' => 'Upstream gaf ongeldige JSON terug'];
     }
     return $decoded;
 }
 
+if (!defined('BB_CACHE_TTL')) define('BB_CACHE_TTL', 600);
+
+// Bumped whenever the shape of the cached gloss aggregate changes. bb_glosses
+// refuses to trust a cached index whose 'schema' doesn't match — the same
+// self-healing guard mocap_get_index uses in mocapFiles.php — so a cache
+// written by older code is rebuilt instead of silently trusted with fields
+// missing.
+if (!defined('BB_INDEX_SCHEMA')) define('BB_INDEX_SCHEMA', 1);
+
 /**
  * Aggregate glosses for the baked videos, cached to BB_CACHE.
+ *
+ * The cache is only trusted when it is younger than BB_CACHE_TTL and carries
+ * the current BB_INDEX_SCHEMA, mirroring mocap_get_index's TTL/schema guard.
+ * If pagination fails partway through the upstream fetch, no cache is written
+ * and an explicit error is returned — a truncated index must never be served
+ * as if it were complete.
  */
 function bb_glosses($force = false) {
-    if (!$force && file_exists(BB_CACHE)) {
+    if (!$force && file_exists(BB_CACHE) && (time() - filemtime(BB_CACHE)) < BB_CACHE_TTL) {
         $decoded = json_decode(@file_get_contents(BB_CACHE), true);
-        if (is_array($decoded) && isset($decoded['bases'])) { return $decoded; }
+        if (is_array($decoded) && isset($decoded['bases'])
+            && ($decoded['schema'] ?? null) === BB_INDEX_SCHEMA) {
+            return $decoded;
+        }
     }
 
     $res = bb_fetch_videos(['baked' => '1', 'hasGloss' => '1', 'limit' => 500, 'page' => 1]);
@@ -93,7 +119,25 @@ function bb_glosses($force = false) {
     $page = 2;
     while (count($rows) < $total) {
         $next = bb_fetch_videos(['baked' => '1', 'hasGloss' => '1', 'limit' => 500, 'page' => $page]);
-        if (empty($next['success']) || !count($next['videos'])) { break; }
+        if (empty($next['success'])) {
+            // A genuine upstream failure mid-pagination: the rows gathered so
+            // far are an unknown-sized subset, not a complete index. Report
+            // loudly and do not cache — silently caching a truncated result
+            // would keep serving stale, incomplete data until someone happens
+            // to pass refresh=1.
+            return [
+                'success' => false,
+                'error'   => 'Upstream-aanvraag mislukt tijdens het ophalen van pagina ' . $page
+                             . ': ' . ($next['error'] ?? 'onbekende fout'),
+                'partial' => true,
+            ];
+        }
+        if (!count($next['videos'])) {
+            // Upstream succeeded but had nothing left before reaching $total
+            // — data can legitimately change between paged calls. Not an
+            // error; stop paging cleanly.
+            break;
+        }
         $rows = array_merge($rows, $next['videos']);
         $page++;
     }
@@ -106,6 +150,7 @@ function bb_glosses($force = false) {
     }
 
     $agg = gloss_aggregate($files);
+    $agg['schema'] = BB_INDEX_SCHEMA;
     $agg['built_at'] = time();
     $agg['videos'] = count($rows);
 
@@ -132,11 +177,18 @@ function bb_categories() {
 
 /**
  * Stream a ZIP of gloss SRTs for the given bases.
+ *
+ * When the requested base count exceeds BB_MAX_ZIP, the excess is dropped
+ * from the archive but never silently: a TRUNCATED.txt manifest is added
+ * inside the ZIP itself, since a response header alone would be discarded by
+ * the browser's file-download path and give the caller no way to notice.
  */
 function bb_stream_zip($bases) {
+    $requested = count($bases);
     $paths = [];
+    $truncated = false;
     foreach ($bases as $base) {
-        if (count($paths) >= BB_MAX_ZIP) { break; }
+        if (count($paths) >= BB_MAX_ZIP) { $truncated = true; break; }
         $p = bb_srt_path($base);
         if ($p !== null) { $paths[basename($p)] = $p; }
     }
@@ -150,11 +202,19 @@ function bb_stream_zip($bases) {
     $tmp = tempnam(sys_get_temp_dir(), 'bbzip');
     $zip = new ZipArchive();
     if ($zip->open($tmp, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+        @unlink($tmp);
         header('Content-Type: application/json; charset=utf-8');
         echo json_encode(['success' => false, 'error' => 'Kon ZIP niet aanmaken.']);
         return;
     }
     foreach ($paths as $name => $path) { $zip->addFile($path, $name); }
+    if ($truncated) {
+        $zip->addFromString('TRUNCATED.txt',
+            "Deze ZIP is afgekapt.\n" .
+            "Opgevraagd: {$requested} basissen\n" .
+            "Opgenomen: " . count($paths) . " basissen\n" .
+            "Limiet (BB_MAX_ZIP): " . BB_MAX_ZIP . "\n");
+    }
     $zip->close();
 
     header('Content-Type: application/zip');
@@ -172,7 +232,10 @@ if (php_sapi_name() !== 'cli' && isset($_GET['action'])) {
 
     if ($action === 'zip') {
         $raw = $_POST['bases'] ?? $_GET['bases'] ?? '';
-        $bases = is_array($raw) ? $raw : array_filter(explode(',', $raw));
+        $bases = is_array($raw) ? $raw : explode(',', $raw);
+        // Filter on length, not truthiness: the default array_filter callback
+        // would drop a base literally equal to "0".
+        $bases = array_filter($bases, function ($v) { return strlen($v) > 0; });
         bb_stream_zip($bases);
         exit();
     }
