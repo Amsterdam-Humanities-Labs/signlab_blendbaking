@@ -6,30 +6,64 @@
  */
 
 /**
+ * Convert an SRT timecode ("00:00:02,188") to integer milliseconds.
+ *
+ * Returns null rather than 0 for anything that is not exactly hh:mm:ss,mmm,
+ * so a caller can tell "this cue had no parsable timecode" apart from a
+ * genuine zero offset. Callers that feed the result straight into arithmetic
+ * must therefore null-check first.
+ *
+ * @return int|null
+ */
+function srt_timecode_to_ms($timecode) {
+    if (!is_string($timecode)) { return null; }
+    if (!preg_match('/^(\d{2}):(\d{2}):(\d{2}),(\d{3})$/', $timecode, $m)) { return null; }
+    return ((int)$m[1] * 3600 + (int)$m[2] * 60 + (int)$m[3]) * 1000 + (int)$m[4];
+}
+
+/**
  * Cue entries from an SRT file's contents, in file order, duplicates kept.
  *
  * A cue line is any line that is not blank, not a bare sequence number, and
- * does not contain a timecode arrow. Each entry carries the start timecode of
- * the block it belongs to, so callers can point at where a gloss occurs.
+ * does not contain a timecode arrow. Each entry carries the start and end
+ * timecodes of the block it belongs to, plus the block's own SRT index, so
+ * callers can point at where a gloss occurs and how long it lasts.
  *
  * A blank line ends the block, so a stray cue line with no preceding timecode
- * reports a null start rather than inheriting the previous block's.
+ * reports nulls rather than inheriting the previous block's.
  *
- * @return array list of ['text' => string, 'start' => ?string]
+ * `end` is null when the arrow line has a start but no parsable end — the
+ * start is still kept, because a half-parsed timecode line is more useful
+ * than none and the corpus has no such lines to lose.
+ *
+ * Known edge, deliberately left alone: a cue whose text is nothing but digits
+ * is indistinguishable from an index line and gets swallowed as one. No gloss
+ * in the vocabulary is a bare number. Do not "fix" it by dropping the index
+ * skip — that would emit every index line as a phantom gloss.
+ *
+ * @return array list of ['text' => string, 'start' => ?string, 'end' => ?string, 'index' => ?int]
  */
 function srt_cue_entries($contents) {
     $entries = [];
     $start = null;
+    $end   = null;
+    $index = null;
 
     foreach (preg_split('/\r?\n/', $contents) as $line) {
         $line = trim($line);
-        if ($line === '') { $start = null; continue; }
-        if (preg_match('/^\d+$/', $line)) { continue; }
+        if ($line === '') { $start = null; $end = null; $index = null; continue; }
+        if (preg_match('/^\d+$/', $line)) { $index = (int)$line; continue; }
         if (strpos($line, '-->') !== false) {
-            $start = preg_match('/^(\d{2}:\d{2}:\d{2},\d{3})\s*-->/', $line, $m) ? $m[1] : null;
+            if (preg_match('/^(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})/', $line, $m)) {
+                $start = $m[1];
+                $end   = $m[2];
+            } else {
+                $start = preg_match('/^(\d{2}:\d{2}:\d{2},\d{3})\s*-->/', $line, $m) ? $m[1] : null;
+                $end   = null;
+            }
             continue;
         }
-        $entries[] = ['text' => $line, 'start' => $start];
+        $entries[] = ['text' => $line, 'start' => $start, 'end' => $end, 'index' => $index];
     }
 
     return $entries;
@@ -61,11 +95,44 @@ function srt_base_gloss($cue) {
 }
 
 /**
+ * Every gloss cue in one SRT, in file order, in the shape the timings API serves.
+ *
+ * Each cue carries both timecode forms on purpose: the raw SRT strings, for
+ * humans and for writing an SRT back out, and integer milliseconds, for
+ * seeking a player without the caller reimplementing timecode parsing. The
+ * folded `baseGloss` ships alongside the exact `gloss` for the same reason —
+ * so a consumer can group variants without reimplementing srt_base_gloss().
+ *
+ * `index` falls back to the cue's 1-based position when the SRT block had no
+ * number line, so it is always usable as a stable within-file ordinal.
+ *
+ * @return array list of ['index','gloss','baseGloss','start','end','startMs','endMs','durationMs']
+ */
+function srt_gloss_timings($contents) {
+    $timings = [];
+    foreach (srt_cue_entries($contents) as $i => $entry) {
+        $startMs = srt_timecode_to_ms($entry['start']);
+        $endMs   = srt_timecode_to_ms($entry['end']);
+        $timings[] = [
+            'index'      => $entry['index'] !== null ? $entry['index'] : $i + 1,
+            'gloss'      => $entry['text'],
+            'baseGloss'  => srt_base_gloss($entry['text']),
+            'start'      => $entry['start'],
+            'end'        => $entry['end'],
+            'startMs'    => $startMs,
+            'endMs'      => $endMs,
+            'durationMs' => ($startMs !== null && $endMs !== null) ? $endMs - $startMs : null,
+        ];
+    }
+    return $timings;
+}
+
+/**
  * Aggregate glosses across a set of SRT files.
  *
  * @param array $files map of base filename => absolute SRT path
  * @return array ['files' => int, 'bases' => [base => ['count','videos','variants'=>[variant=>count],
- *                                                    'occurrences'=>[['video','start','cue']]]]]
+ *                                                    'occurrences'=>[['video','start','end','cue']]]]]
  */
 function gloss_aggregate($files) {
     $bases = [];
@@ -91,6 +158,7 @@ function gloss_aggregate($files) {
             $bases[$base]['occurrences'][] = [
                 'video' => $videoBase,
                 'start' => $entry['start'],
+                'end'   => $entry['end'],
                 'cue'   => $cue,
             ];
             if (!isset($seenInThisFile[$base])) {

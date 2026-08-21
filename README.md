@@ -13,7 +13,7 @@ script, direct disk access to `zin`'s EAF directory (see below).
 
 ## What it does
 
-`index.html` is a single Bootstrap page with two tabs:
+`index.html` is a single Bootstrap page with three tabs:
 
 - **SRT bestanden** ("SRT files") — lists baked videos that have a gloss SRT,
   with search, a status filter, and ZIP download (selected rows, or everything
@@ -25,15 +25,44 @@ script, direct disk access to `zin`'s EAF directory (see below).
 
   Each gloss row expands. The panel lists every sentence containing that gloss
   — the video's base filename, the sentence text, its thema, the exact cue and
-  start timecode of each occurrence (`AAP-A @ 00:00:01,470`), and SRT and GLB
+  start timecode of each occurrence (`AAP-A @ 00:00:01,470`), and SRT and FBX
   links — plus a button that ZIPs the gloss SRTs of just those sentences.
 
   A gloss signed twice in one sentence appears once in the panel with both
-  timecodes listed. GLBs are linked per row rather than bundled: `PT-1hand`
-  spans 427 videos, so a GLB archive for it would run to roughly 100 MB.
+  timecodes listed. FBX files are linked per row rather than bundled:
+  `PT-1hand` spans hundreds of videos, and the FBX files run to several MB
+  each, so an archive for one common gloss would be enormous.
 
   The panel needs no extra endpoint — it joins the `occurrences` list from
   `action=glosses` against the video rows the SRT tab has already loaded.
+
+- **API** — hand-written integration documentation for `action=timings`, in
+  English while the rest of the UI is Dutch, because its audience is whoever is
+  wiring a player or a pipeline to the endpoint rather than the operators using
+  the other two tabs. Includes a live "Try it" box that calls the real endpoint
+  and pretty-prints the response.
+
+  There is no generated schema. **If you change `timings`' parameters or
+  response shape, update this tab in the same commit.**
+
+### Model files: FBX, not GLB
+
+Both tabs link the animation as **FBX**. Upstream returns `glbUrl` (the baked
+GLB) and `fbxFilename` (the newest take's FBX); `api.php` derives the FBX link
+from `glbUrl` by swapping the extension, and does *not* use `fbxFilename`.
+
+`fbxFilename` is the newest take, while `glbUrl` is the newest *baked* take —
+different takes whenever `glbIsLatestTake` is false. Linking `fbxFilename` would
+hand out an animation whose timeline does not match the SRT timings, sentence
+and take number shown beside it, with nothing on screen revealing the mismatch.
+Every baked take ships its `.fbx` and `.glb` side by side in
+`/gebarenoverleg_media/fbx/post_processed/` under the same stem (857 of each,
+zero unmatched, as of 2026-08-21), so the extension swap keeps every field of a
+row pinned to one take.
+
+`action=list` adds `fbxUrl` alongside upstream's `glbUrl` rather than replacing
+it — that action is a proxy, and a proxy that drops fields is a lossy one. The
+public `timings` action returns `fbxUrl` only.
 
 All row data in both tabs ultimately comes from one upstream endpoint:
 `GET https://signcollect.nl/zin/getZinnen.php?action=listMocapFiles`. blendBaking
@@ -54,9 +83,43 @@ filesystem dependency on the `zin` tree, distinct from the HTTP dependency on
 
 All actions except `zip` respond with JSON. `zip` streams a file.
 
+Every action responds with HTTP 200 even on failure — errors are
+`{"success": false, "error": "..."}` in the body, so callers must check
+`success` rather than the status code. Error strings are Dutch.
+
+Every action also sends `Access-Control-Allow-Origin: *` and answers `OPTIONS`
+preflights with 204. The data is public and read-only, there is no session to
+leak, and the FBX/GLB files these endpoints link to are already served with the
+same header by `/gebarenoverleg_media/fbx/post_processed/.htaccess`. There is
+deliberately no `Allow-Credentials` — it would make the wildcard origin illegal
+anyway.
+
 - **`list`** — proxies `listMocapFiles` with `baked=1&hasGloss=1` fixed, plus
   pass-through params `mcpStatusTijdAnnotatie`, `search`, `page`, `limit`
-  (default 500). Backs the SRT tab's table.
+  (default 500). Each row gains a derived `fbxUrl`. Backs the SRT tab's table.
+
+- **`timings`** — the public API: gloss cue timings per sentence. One record per
+  baked video, each carrying the sentence text, thema, take number, `fbxUrl`,
+  `srtUrl`, and a `glosses` list with every cue's `gloss`, folded `baseGloss`,
+  raw `start`/`end` timecodes, and integer `startMs`/`endMs`/`durationMs`.
+
+  All params optional: `base`/`bases` (comma-joined), `sentenceId`, `gloss` (a
+  *base* gloss), `search`, `mcpStatusTijdAnnotatie`, `page`, `limit` (default
+  25, capped at 200 — each sentence in a page costs one SRT read).
+
+  `base`, `sentenceId` and `gloss` are filtered locally against the cached
+  video list rather than pushed upstream, because none of them has an upstream
+  equivalent and mixing local and remote filters would make `total` mean
+  different things depending on which filters a caller combined. Only the rows
+  in the requested page have their SRT read, so page size — not corpus size —
+  is what costs disk I/O.
+
+  A sentence whose SRT cannot be read is still returned, with `glosses: []` and
+  a message in `srtError`. Dropping it would make `total` disagree with what a
+  client can actually page through, and would hide a broken file behind a
+  silently shorter list.
+
+  Documented for consumers in `index.html`'s API tab.
 - **`glosses`** — the aggregated gloss index (see below) plus `categoryMap`.
   Param `refresh=1` forces a rebuild instead of serving the cache. Backs the
   Glossen tab.
@@ -86,15 +149,33 @@ All actions except `zip` respond with JSON. `zip` streams a file.
 
 ### The gloss index and its cache
 
-`bb_glosses()` builds the gloss aggregate by paging through
-`listMocapFiles?baked=1&hasGloss=1` (500 rows per page) until it has every
-matching video, reading each one's gloss SRT, and aggregating cues to base
-glosses (`srtGloss.php`'s `gloss_aggregate()`). The result is cached to
-`cache/gloss_index.json` for `BB_CACHE_TTL` (600s) and tagged with
-`BB_INDEX_SCHEMA`; a cache written by older code, or one whose schema doesn't
-match, is rebuilt rather than trusted with fields missing. If pagination fails
-partway through, nothing is cached and an explicit error is returned — a
-partial fetch must never be served as if it were the whole corpus.
+`bb_fetch_all_videos()` pages through `listMocapFiles?baked=1&hasGloss=1` (500
+rows per page) until it has every matching video, and caches the unfiltered
+result to `cache/videos.json` for `BB_CACHE_TTL` (600s). Both `glosses` and
+`timings` go through it, so paging through timings does not re-fetch all of
+upstream on every request. Filtered fetches are not cached — keying a cache by
+filter combination would expire in ways callers cannot reason about.
+
+If pagination fails partway through, nothing is cached and an explicit error is
+returned — a partial fetch must never be served as if it were the whole corpus.
+A short list looks exactly like a complete one to every caller, which makes
+this the one failure mode nothing downstream can detect after the fact.
+
+`bb_glosses()` builds the gloss aggregate on top of that list, reading each
+video's gloss SRT and aggregating cues to base glosses (`srtGloss.php`'s
+`gloss_aggregate()`). The result is cached to `cache/gloss_index.json` and
+tagged with `BB_INDEX_SCHEMA` (currently 3); a cache written by older code, or
+one whose schema doesn't match, is rebuilt rather than trusted with fields
+missing. Bump the schema whenever the aggregate's shape changes — 3 is where it
+landed when occurrences gained an `end` timecode.
+
+`BB_VIDEO_CACHE` is deliberately derived from `dirname(BB_CACHE)` rather than
+`__DIR__`. `TestSrtGloss`'s fake-upstream fixture isolates itself by
+pre-defining `BB_CACHE` alone, so a second cache anchored to `__DIR__` gets the
+fixture's three fake videos written into the real `cache/` and served to
+production for a whole TTL. That happened once during development;
+`testVideoCacheIsIsolatedWithGlossCache` guards it now. **Any new cache file
+must be derived the same way.**
 
 `cache/` is git-ignored; deleting it is always safe; it repopulates on the next
 request that needs it (or immediately on `refresh=1` / `rebuildIndex`).
@@ -105,6 +186,12 @@ suppresses the warning), and every request then re-reads and re-aggregates
 all gloss SRTs from disk instead of hitting the cache. `chgrp www-data cache
 && chmod 775 cache` (or equivalent) is enough; matches `/web/zin/cache`'s
 `www-data:www-data 755`.
+
+The same applies to the cache *files*, which is easy to get wrong: running the
+tool from a CLI as yourself writes `cache/*.json` owned by you, and `www-data`
+can then neither overwrite nor replace them, so production silently stops
+caching. A group-writable directory does not save you here. `rm cache/*.json`
+after any local CLI run that populated it.
 
 ## Regenerating `categories.json`
 
@@ -164,9 +251,13 @@ cd /web/blendBaking
 php tests/TestRunner.php
 ```
 
-Runs `TestSrtGloss` (cue parsing, base-gloss folding, aggregation) and
+Runs `TestSrtGloss` (cue parsing, timecode conversion, gloss timings,
+base-gloss folding, aggregation, ZIP truncation, cache isolation) and
 `TestCategories` (the categorization pattern rules, and cross-checks against
 `categories.json` itself). Exit code is 0 iff every test passed.
+
+`cache/` must still be empty after a run — if it isn't, a fixture is leaking
+into the real cache. See `BB_VIDEO_CACHE` above.
 
 `tests/` and `scripts/` both carry a `.htaccess` denying all web access —
 CLI-only. `TestRunner.php`'s fixture helper `shell_exec`s `php -S ... &` and

@@ -50,6 +50,36 @@
   #rowCounter, #glossCounter {
     font-weight: 500;
   }
+
+  /* API tab. Bootstrap has no code-block style of its own, so the docs get a
+     minimal one here rather than pulling in a highlighter for static snippets. */
+  .api-doc code {
+    color: #ab296a;
+    background-color: #f1f3f5;
+    padding: .1rem .25rem;
+    border-radius: .2rem;
+  }
+  .api-code {
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: .375rem;
+    padding: .75rem 1rem;
+    margin-bottom: 1rem;
+    overflow-x: auto;
+  }
+  .api-code code {
+    color: #212529;
+    background: none;
+    padding: 0;
+    white-space: pre;
+  }
+  .api-response {
+    max-height: 45vh;
+    overflow-y: auto;
+  }
+  .api-doc th {
+    font-weight: 600;
+  }
 </style>
 </head>
 <body>
@@ -65,6 +95,10 @@
     <li class="nav-item" role="presentation">
       <button class="nav-link" id="gloss-tab" data-bs-toggle="tab" data-bs-target="#gloss-pane"
               type="button" role="tab" aria-controls="gloss-pane" aria-selected="false">Glossen</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="api-tab" data-bs-toggle="tab" data-bs-target="#api-pane"
+              type="button" role="tab" aria-controls="api-pane" aria-selected="false">API</button>
     </li>
   </ul>
 
@@ -114,7 +148,7 @@
                 <th>Zin</th>
                 <th>Thema</th>
                 <th>Take</th>
-                <th>GLB</th>
+                <th>FBX</th>
                 <th>SRT</th>
                 <th>Status tijd annotatie</th>
               </tr>
@@ -173,6 +207,307 @@
             </thead>
             <tbody id="glossTableBody">
               <tr><td colspan="5" class="text-center text-muted">Laden...</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </div>
+
+    <!--
+      Tab 3: API.
+
+      Deliberately in English while the rest of the UI is Dutch: this pane is
+      integration documentation for whoever is wiring a player or a pipeline
+      to the endpoint, and that audience is not reliably Dutch-speaking. The
+      two operator-facing tabs stay Dutch.
+
+      The endpoint list below is hand-maintained. If you add or change an
+      action in api.php, change it here too — there is no generated schema.
+    -->
+    <div class="tab-pane fade" id="api-pane" role="tabpanel" aria-labelledby="api-tab">
+      <div class="content-section api-doc">
+
+        <h2 class="h4">Gloss timings API</h2>
+        <p class="text-muted">
+          Get the gloss SRT timings of every baked sentence as JSON — one record per
+          sentence, with each sign's gloss, its start and end time, and a link to the
+          matching FBX animation.
+        </p>
+
+        <h3 class="h5 mt-4">Connecting</h3>
+        <table class="table table-sm w-auto">
+          <tbody>
+            <tr><th class="text-nowrap">Endpoint</th><td><code id="apiBaseUrl">api.php</code></td></tr>
+            <tr><th class="text-nowrap">Method</th><td><code>GET</code></td></tr>
+            <tr><th class="text-nowrap">Response</th><td><code>application/json; charset=utf-8</code></td></tr>
+            <tr><th class="text-nowrap">Authentication</th><td>None. The data is public and read-only.</td></tr>
+            <tr>
+              <th class="text-nowrap">CORS</th>
+              <td>
+                <code>Access-Control-Allow-Origin: *</code> — browser clients on any
+                origin can call this directly, no proxy needed. The FBX files it links
+                to are served with the same header.
+              </td>
+            </tr>
+            <tr>
+              <th class="text-nowrap">Errors</th>
+              <td>
+                Always HTTP 200 with <code>{"success": false, "error": "..."}</code> in the
+                body. Check <code>success</code>, not the status code. Error messages are
+                in Dutch.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3 class="h5 mt-4">Getting SRT timings per sentence</h3>
+        <p>
+          One call returns everything you need to drive a player:
+        </p>
+        <pre class="api-code"><code>GET api.php?action=timings&amp;base=M20260506_0579</code></pre>
+
+        <p>Parameters, all optional — with none of them you get the whole corpus, paged:</p>
+        <div class="table-responsive">
+          <table class="table table-sm table-bordered">
+            <thead>
+              <tr><th>Parameter</th><th>Type</th><th>Meaning</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>base</code> / <code>bases</code></td>
+                <td>string</td>
+                <td>
+                  One video base filename, or several comma-separated
+                  (<code>bases=A,B,C</code>). Use one comma-joined value rather than a
+                  repeated parameter — PHP's <code>max_input_vars</code> silently drops
+                  repeated params past 1000.
+                </td>
+              </tr>
+              <tr>
+                <td><code>sentenceId</code></td>
+                <td>int</td>
+                <td>Only the video(s) for this sentence. One sentence can have several baked takes.</td>
+              </tr>
+              <tr>
+                <td><code>gloss</code></td>
+                <td>string</td>
+                <td>
+                  Only sentences containing this <em>base</em> gloss — the folded form
+                  without the variant letter, so <code>gloss=HUILEN</code> matches
+                  <code>HUILEN-A</code> and <code>HUILEN-B</code>. Case-sensitive.
+                </td>
+              </tr>
+              <tr>
+                <td><code>search</code></td>
+                <td>string</td>
+                <td>Free-text match on base filename or sentence text.</td>
+              </tr>
+              <tr>
+                <td><code>mcpStatusTijdAnnotatie</code></td>
+                <td>string</td>
+                <td><code>Klaar</code>, <code>Check nodig</code> or <code>Niet Klaar</code>.</td>
+              </tr>
+              <tr>
+                <td><code>page</code></td>
+                <td>int</td>
+                <td>1-based. Default <code>1</code>.</td>
+              </tr>
+              <tr>
+                <td><code>limit</code></td>
+                <td>int</td>
+                <td>
+                  Sentences per page. Default <code>25</code>, silently capped at
+                  <code>200</code> — each sentence in a page costs one SRT read on the server.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="h5 mt-4">Response</h3>
+        <pre class="api-code"><code>{
+  "success": true,
+  "total": 645,          // sentences matching the filter, across all pages
+  "page": 1,
+  "limit": 25,
+  "count": 1,            // records in THIS page
+  "sentences": [
+    {
+      "base": "M20260506_0579",
+      "sentenceId": 5273,
+      "videoId": 62470,
+      "zin": "Jom Kippoer is een verdrietige dag.",
+      "thema": "Jom Kippoer",
+      "takeNumber": 0,
+      "statusTijdAnnotatie": null,
+      "fbxUrl": "https://signcollect.nl/gebarenoverleg_media/fbx/post_processed/M20260506_0579_260713_0.fbx",
+      "fbxIsLatestTake": true,
+      "srtUrl": "https://signcollect.nl/zin/eaf/zin/M20260506_0579_Signbank_ID_glossen.srt",
+      "glossCount": 4,
+      "firstStartMs": 1186,   // start of the first sign
+      "lastEndMs": 3842,      // end of the last sign
+      "srtError": null,
+      "glosses": [
+        {
+          "index": 2,               // the cue's number in the SRT
+          "gloss": "PT-1HAND",      // exactly as annotated
+          "baseGloss": "PT-1HAND",  // variant letter folded off
+          "start": "00:00:02,188",  // raw SRT timecodes
+          "end":   "00:00:02,798",
+          "startMs": 2188,          // same instants in milliseconds
+          "endMs":   2798,
+          "durationMs": 610
+        }
+      ]
+    }
+  ]
+}</code></pre>
+
+        <h3 class="h5 mt-4">Things worth knowing</h3>
+        <ul>
+          <li>
+            <strong>Timings and the FBX belong to the same take.</strong>
+            <code>fbxUrl</code> is derived from the take that was actually baked, so the
+            cue times line up with that animation's timeline. When
+            <code>fbxIsLatestTake</code> is <code>false</code>, a newer take of the same
+            sentence exists but has not been baked — the FBX you get is the newest one
+            that has been.
+          </li>
+          <li>
+            <strong>Times are relative to the recording, not to the first sign.</strong>
+            Sentences typically start signing around the 1&nbsp;second mark, which is why
+            <code>firstStartMs</code> is rarely 0.
+          </li>
+          <li>
+            <strong><code>gloss</code> vs <code>baseGloss</code>.</strong>
+            <code>HUILEN-A</code> and <code>HUILEN-B</code> are two annotated variants of one
+            sign; both fold to <code>HUILEN</code>. Group on <code>baseGloss</code>, display
+            <code>gloss</code>. The folding is case-sensitive, and the corpus does contain
+            both <code>PT-1hand</code> and <code>PT-1HAND</code> — they do not fold together.
+          </li>
+          <li>
+            <strong><code>nvt</code> is a real cue.</strong> It marks a stretch of signing
+            with no gloss assigned. It is returned like any other; filter it out yourself
+            if you don't want it.
+          </li>
+          <li>
+            <strong>A sentence with an unreadable SRT is still returned</strong>, with
+            <code>glosses: []</code> and a message in <code>srtError</code> — so
+            <code>total</code> always matches what you can page through, and a broken file
+            is visible rather than silently missing.
+          </li>
+          <li>
+            <strong>Counts are videos, not sentences.</strong> <code>total</code> counts
+            baked videos; one sentence with two baked takes is two records with the same
+            <code>sentenceId</code>.
+          </li>
+          <li>
+            <strong>Results are cached for 10 minutes</strong> server-side. Newly baked
+            takes show up on the next cache expiry.
+          </li>
+        </ul>
+
+        <h3 class="h5 mt-4">Examples</h3>
+
+        <p class="mb-1"><strong>curl</strong> — one sentence:</p>
+        <pre class="api-code"><code>curl -s '<span class="api-origin"></span>api.php?action=timings&amp;base=M20260506_0579'</code></pre>
+
+        <p class="mb-1"><strong>JavaScript</strong> — highlight the current sign while an animation plays:</p>
+        <pre class="api-code"><code>const res  = await fetch('<span class="api-origin"></span>api.php?action=timings&amp;base=M20260506_0579');
+const data = await res.json();
+if (!data.success) throw new Error(data.error);
+
+const sentence = data.sentences[0];
+console.log(sentence.zin, sentence.fbxUrl);
+
+// Which sign is showing at a given playback position?
+function glossAt(ms) {
+  return sentence.glosses.find(g =&gt; g.startMs &lt;= ms &amp;&amp; ms &lt; g.endMs) || null;
+}</code></pre>
+
+        <p class="mb-1"><strong>Python</strong> — page through every sentence containing a gloss:</p>
+        <pre class="api-code"><code>import requests
+
+API = '<span class="api-origin"></span>api.php'
+
+def sentences(**params):
+    page = 1
+    while True:
+        r = requests.get(API, params={'action': 'timings', 'page': page,
+                                      'limit': 200, **params})
+        d = r.json()
+        if not d['success']:
+            raise RuntimeError(d['error'])
+        yield from d['sentences']
+        if page * d['limit'] &gt;= d['total']:
+            return
+        page += 1
+
+for s in sentences(gloss='HUILEN'):
+    for g in s['glosses']:
+        if g['baseGloss'] == 'HUILEN':
+            print(s['base'], g['gloss'], g['start'], '-&gt;', g['end'])</code></pre>
+
+        <h3 class="h5 mt-4">Try it</h3>
+        <div class="row g-2 align-items-end mb-2">
+          <div class="col-sm-5">
+            <label class="form-label mb-1" for="apiTryBase">base (blank = whole corpus)</label>
+            <input type="text" id="apiTryBase" class="form-control" value="M20260506_0579">
+          </div>
+          <div class="col-sm-3">
+            <label class="form-label mb-1" for="apiTryGloss">gloss (optional)</label>
+            <input type="text" id="apiTryGloss" class="form-control" placeholder="HUILEN">
+          </div>
+          <div class="col-sm-2">
+            <label class="form-label mb-1" for="apiTryLimit">limit</label>
+            <input type="number" id="apiTryLimit" class="form-control" value="1" min="1" max="200">
+          </div>
+          <div class="col-sm-2">
+            <button id="apiTryBtn" class="btn btn-primary w-100">Send</button>
+          </div>
+        </div>
+        <p class="mb-1"><code id="apiTryUrl" class="text-muted"></code></p>
+        <pre class="api-code api-response"><code id="apiTryOut">Press Send to call the endpoint.</code></pre>
+
+        <h3 class="h5 mt-4">Other actions</h3>
+        <p class="text-muted">
+          These back the two tabs of this page. They are stable but shaped for the UI
+          rather than for integration — prefer <code>timings</code>.
+        </p>
+        <div class="table-responsive">
+          <table class="table table-sm table-bordered">
+            <thead><tr><th>Action</th><th>Returns</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><code>action=list</code></td>
+                <td>
+                  Baked videos with a gloss SRT, proxied from the upstream corpus API,
+                  each row given an extra <code>fbxUrl</code>. Params:
+                  <code>search</code>, <code>mcpStatusTijdAnnotatie</code>,
+                  <code>page</code>, <code>limit</code> (default 500).
+                </td>
+              </tr>
+              <tr>
+                <td><code>action=glosses</code></td>
+                <td>
+                  The whole base-gloss vocabulary: occurrence counts, video counts,
+                  spelling variants, every occurrence, and the category map.
+                  <code>refresh=1</code> forces a rebuild.
+                </td>
+              </tr>
+              <tr>
+                <td><code>action=categories</code></td>
+                <td>The hand-curated category map on its own.</td>
+              </tr>
+              <tr>
+                <td><code>action=zip</code></td>
+                <td>
+                  Streams a ZIP of gloss SRTs. POST a single comma-joined
+                  <code>bases</code> field. Responds with JSON on error, so check
+                  <code>Content-Type</code> before treating the body as a file.
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -324,7 +659,10 @@
         applySrtFilters();
       })
       .catch(function (err) {
-        showAlert(alertTarget, err.message || String(err));
+        // "srtAlerts" literally: alertTarget is postBasesAsZip's parameter and
+        // is not in scope here, so referencing it threw a ReferenceError that
+        // replaced the real load failure with a misleading one.
+        showAlert("srtAlerts", err.message || String(err));
         document.getElementById("srtTableBody").innerHTML =
           '<tr><td colspan="8" class="text-center text-muted">Kon de lijst niet laden.</td></tr>';
         document.getElementById("rowCounter").textContent = "";
@@ -386,10 +724,13 @@
     var html = rows.map(function (row) {
       var checked = srtSelected.has(row.base) ? " checked" : "";
       var oldTakeMarker = row.glbIsLatestTake === false
-        ? ' <span class="old-take-marker" title="Deze GLB komt van een oudere take dan de nieuwste opname.">&#9888;</span>'
+        ? ' <span class="old-take-marker" title="Deze FBX komt van een oudere take dan de nieuwste opname.">&#9888;</span>'
         : "";
-      var glbCell = row.glbUrl
-        ? '<a href="' + escapeHtml(row.glbUrl) + '" target="_blank" rel="noopener">GLB</a>' + oldTakeMarker
+      // fbxUrl is derived server-side from glbUrl by swapping the extension,
+      // so it stays pinned to the same take as this row's SRT and timings.
+      // glbIsLatestTake still describes that take, hence the marker above.
+      var fbxCell = row.fbxUrl
+        ? '<a href="' + escapeHtml(row.fbxUrl) + '" target="_blank" rel="noopener">FBX</a>' + oldTakeMarker
         : '<span class="text-muted">-</span>';
       var srtCell = row.glossSrtUrl
         ? '<a href="' + escapeHtml(row.glossSrtUrl) + '" target="_blank" rel="noopener">SRT</a>'
@@ -401,7 +742,7 @@
         '<td>' + escapeHtml(row.zin) + '</td>' +
         '<td>' + escapeHtml(row.thema) + '</td>' +
         '<td>' + escapeHtml(row.takeNumber) + '</td>' +
-        '<td>' + glbCell + '</td>' +
+        '<td>' + fbxCell + '</td>' +
         '<td>' + srtCell + '</td>' +
         '<td>' + statusBadgeHtml(row.mcp_status_tijd_annotatie) + '</td>' +
         '</tr>'
@@ -641,10 +982,10 @@
       var thema = meta && meta.thema ? escapeHtml(meta.thema) : '';
 
       var oldTakeMarker = meta && meta.glbIsLatestTake === false
-        ? ' <span class="old-take-marker" title="Deze GLB komt van een oudere take dan de nieuwste opname.">&#9888;</span>'
+        ? ' <span class="old-take-marker" title="Deze FBX komt van een oudere take dan de nieuwste opname.">&#9888;</span>'
         : '';
-      var glbCell = meta && meta.glbUrl
-        ? '<a href="' + escapeHtml(meta.glbUrl) + '" target="_blank" rel="noopener">GLB</a>' + oldTakeMarker
+      var fbxCell = meta && meta.fbxUrl
+        ? '<a href="' + escapeHtml(meta.fbxUrl) + '" target="_blank" rel="noopener">FBX</a>' + oldTakeMarker
         : '<span class="text-muted">-</span>';
       var srtCell = meta && meta.glossSrtUrl
         ? '<a href="' + escapeHtml(meta.glossSrtUrl) + '" target="_blank" rel="noopener">SRT</a>'
@@ -656,7 +997,7 @@
         '<td>' + thema + '</td>' +
         '<td class="text-nowrap">' + times + '</td>' +
         '<td>' + srtCell + '</td>' +
-        '<td>' + glbCell + '</td>' +
+        '<td>' + fbxCell + '</td>' +
         '</tr>';
     }).join("");
 
@@ -673,7 +1014,7 @@
         '<div class="table-responsive">' +
           '<table class="table table-sm table-bordered mb-0">' +
             '<thead><tr>' +
-              '<th>Bestand</th><th>Zin</th><th>Thema</th><th>Voorkomen</th><th>SRT</th><th>GLB</th>' +
+              '<th>Bestand</th><th>Zin</th><th>Thema</th><th>Voorkomen</th><th>SRT</th><th>FBX</th>' +
             '</tr></thead>' +
             '<tbody>' + body + '</tbody>' +
           '</table>' +
@@ -777,6 +1118,62 @@
       };
     });
     downloadBlob("blendBaking_glossen.json", JSON.stringify(payload, null, 2), "application/json;charset=utf-8");
+  });
+
+  // ---------------------------------------------------------------------
+  // Tab 3: API docs
+  // ---------------------------------------------------------------------
+
+  // The docs quote a full absolute URL so a reader can paste the curl/Python
+  // examples straight into a terminal on another machine. It is filled in from
+  // the page's own location rather than hardcoded, so the examples stay correct
+  // on a staging host or a moved directory.
+  function apiEndpointUrl() {
+    return location.origin + location.pathname.replace(/[^/]*$/, "") + "api.php";
+  }
+
+  (function fillApiOrigin() {
+    var full = apiEndpointUrl();
+    document.getElementById("apiBaseUrl").textContent = full;
+    // Only the directory part goes into the examples; the "api.php" after each
+    // placeholder is already in the markup.
+    var prefix = full.replace(/api\.php$/, "");
+    Array.prototype.forEach.call(document.querySelectorAll(".api-origin"), function (span) {
+      span.textContent = prefix;
+    });
+  })();
+
+  function buildApiTryUrl() {
+    var params = new URLSearchParams({ action: "timings" });
+    var base = document.getElementById("apiTryBase").value.trim();
+    var gloss = document.getElementById("apiTryGloss").value.trim();
+    var limit = document.getElementById("apiTryLimit").value.trim();
+    if (base) { params.set("base", base); }
+    if (gloss) { params.set("gloss", gloss); }
+    if (limit) { params.set("limit", limit); }
+    return "api.php?" + params.toString();
+  }
+
+  document.getElementById("apiTryBtn").addEventListener("click", function () {
+    var btn = this;
+    var url = buildApiTryUrl();
+    var out = document.getElementById("apiTryOut");
+
+    document.getElementById("apiTryUrl").textContent = "GET " + url;
+    out.textContent = "Loading...";
+    btn.disabled = true;
+
+    fetch(url)
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        // Pretty-printed rather than summarised: the point of this box is to
+        // show the reader the exact shape they will be parsing.
+        out.textContent = JSON.stringify(data, null, 2);
+      })
+      .catch(function (err) {
+        out.textContent = "Request failed: " + (err.message || String(err));
+      })
+      .finally(function () { btn.disabled = false; });
   });
 
   // ---------------------------------------------------------------------

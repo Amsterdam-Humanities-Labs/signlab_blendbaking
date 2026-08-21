@@ -354,6 +354,115 @@ PHP
         unlink($tmp . '/A.srt'); unlink($tmp . '/B.srt'); rmdir($tmp);
     }
 
+    public function testTimecodeToMs() {
+        $this->assertEquals(0, srt_timecode_to_ms('00:00:00,000'), "zero");
+        $this->assertEquals(2188, srt_timecode_to_ms('00:00:02,188'), "seconds and millis");
+        $this->assertEquals(63500, srt_timecode_to_ms('00:01:03,500'), "minutes carry");
+        $this->assertEquals(3723456, srt_timecode_to_ms('01:02:03,456'), "hours carry");
+    }
+
+    public function testTimecodeToMsRejectsMalformed() {
+        // null, not 0: a caller must be able to tell "unparsable" from "at zero".
+        $this->assertEquals(null, srt_timecode_to_ms('00:00:02.188'), "dot instead of comma");
+        $this->assertEquals(null, srt_timecode_to_ms('0:00:02,188'), "short hour field");
+        $this->assertEquals(null, srt_timecode_to_ms('00:00:02,18'), "short millis field");
+        $this->assertEquals(null, srt_timecode_to_ms(''), "empty string");
+        $this->assertEquals(null, srt_timecode_to_ms(null), "null input");
+        $this->assertEquals(null, srt_timecode_to_ms('nonsense'), "not a timecode at all");
+    }
+
+    public function testCueEntriesCaptureEndTimecodesAndIndexes() {
+        $srt = "1\n00:00:01,975 --> 00:00:02,871\nDOEN-C\n\n7\n00:00:03,044 --> 00:00:03,277\nDOEN-A\n";
+        $entries = srt_cue_entries($srt);
+        $this->assertEquals('00:00:02,871', $entries[0]['end'], "first cue end timecode");
+        $this->assertEquals(1, $entries[0]['index'], "first cue SRT index");
+        $this->assertEquals('00:00:03,277', $entries[1]['end'], "second cue end timecode");
+        $this->assertEquals(7, $entries[1]['index'], "index is the SRT's own number, not a counter");
+    }
+
+    public function testCueEntriesKeepStartWhenEndIsUnparsable() {
+        // A half-broken arrow line loses only the end; the start is still useful.
+        $entries = srt_cue_entries("1\n00:00:01,975 --> garbage\nDOEN-C\n");
+        $this->assertEquals(1, count($entries), "cue still captured");
+        $this->assertEquals('00:00:01,975', $entries[0]['start'], "start survives");
+        $this->assertEquals(null, $entries[0]['end'], "end is null, not garbage");
+    }
+
+    public function testCueEntriesResetEndAndIndexOnBlankLine() {
+        // A stray cue after a blank line must not inherit the previous block's
+        // end or index any more than it inherits its start.
+        $srt = "1\n00:00:01,000 --> 00:00:02,000\nFIRST-A\n\nSTRAY-A\n";
+        $entries = srt_cue_entries($srt);
+        $this->assertEquals(2, count($entries), "both cues captured");
+        $this->assertEquals(null, $entries[1]['start'], "stray start is null");
+        $this->assertEquals(null, $entries[1]['end'], "stray end is null");
+        $this->assertEquals(null, $entries[1]['index'], "stray index is null");
+    }
+
+    public function testGlossTimingsShape() {
+        $srt = "1\n00:00:01,186 --> 00:00:02,128\nnvt\n\n"
+             . "2\n00:00:02,954 --> 00:00:03,498\nHUILEN-A\n";
+        $timings = srt_gloss_timings($srt);
+
+        $this->assertEquals(2, count($timings), "one record per cue");
+
+        $this->assertEquals(1, $timings[0]['index'], "first index");
+        $this->assertEquals('nvt', $timings[0]['gloss'], "nvt is a real cue, not filtered out");
+        $this->assertEquals('nvt', $timings[0]['baseGloss'], "nvt folds to itself");
+        $this->assertEquals(1186, $timings[0]['startMs'], "first startMs");
+        $this->assertEquals(2128, $timings[0]['endMs'], "first endMs");
+        $this->assertEquals(942, $timings[0]['durationMs'], "first durationMs");
+
+        $this->assertEquals('HUILEN-A', $timings[1]['gloss'], "exact variant kept");
+        $this->assertEquals('HUILEN', $timings[1]['baseGloss'], "variant letter folded off");
+        $this->assertEquals('00:00:02,954', $timings[1]['start'], "raw start timecode kept alongside ms");
+        $this->assertEquals('00:00:03,498', $timings[1]['end'], "raw end timecode kept alongside ms");
+        $this->assertEquals(544, $timings[1]['durationMs'], "second durationMs");
+    }
+
+    public function testGlossTimingsNullDurationWhenTimecodeMissing() {
+        $timings = srt_gloss_timings("STRAY-A\n");
+        $this->assertEquals(1, count($timings), "stray cue still reported");
+        $this->assertEquals(1, $timings[0]['index'], "index falls back to 1-based position");
+        $this->assertEquals(null, $timings[0]['startMs'], "no start");
+        $this->assertEquals(null, $timings[0]['endMs'], "no end");
+        // Not 0: a zero-length sign and an untimed one must not look alike.
+        $this->assertEquals(null, $timings[0]['durationMs'], "duration is null, not zero");
+    }
+
+    public function testGlossTimingsHandlesEmptyFile() {
+        $this->assertEquals([], srt_gloss_timings(''), "empty file yields no timings");
+    }
+
+    public function testAggregateOccurrencesCarryEndTimecodes() {
+        $tmp = sys_get_temp_dir() . '/srtend_' . getmypid();
+        @mkdir($tmp, 0777, true);
+        file_put_contents($tmp . '/A.srt',
+            "1\n00:00:01,000 --> 00:00:02,000\nAAP-A\n\n2\n00:00:05,500 --> 00:00:06,000\nAAP-B\n");
+
+        $agg = gloss_aggregate(['A' => $tmp . '/A.srt']);
+        $occ = $agg['bases']['AAP']['occurrences'];
+
+        $this->assertEquals('00:00:02,000', $occ[0]['end'], "first occurrence end");
+        $this->assertEquals('00:00:06,000', $occ[1]['end'], "second occurrence end");
+
+        unlink($tmp . '/A.srt'); rmdir($tmp);
+    }
+
+    public function testVideoCacheIsIsolatedWithGlossCache() {
+        require_once __DIR__ . '/../api.php';
+        // bbRunAgainstFakeUpstream isolates itself by pre-defining BB_CACHE
+        // alone. Every other cache file must therefore live in BB_CACHE's
+        // directory, or a fixture's fake upstream gets written into the real
+        // cache/ and served to production for a whole TTL. This actually
+        // happened once; the assertion exists so it cannot happen again.
+        $this->assertEquals(
+            dirname(BB_CACHE),
+            dirname(BB_VIDEO_CACHE),
+            "BB_VIDEO_CACHE must sit beside BB_CACHE so tests isolate both at once"
+        );
+    }
+
     public function runTests() {
         foreach (get_class_methods($this) as $m) {
             if (strpos($m, 'test') === 0) { $this->$m(); }
