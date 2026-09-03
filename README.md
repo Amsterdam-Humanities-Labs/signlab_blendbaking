@@ -147,6 +147,29 @@ tier. `bb_srt_path()` matches on an *exact* suffix, which is the only thing
 keeping those out of both this and the ZIP download. Do not loosen it into a
 prefix or glob match.
 
+### Cue times are only trustworthy where the status is Klaar
+
+`mcp_status_tijd_annotatie = Klaar` means a sentence's annotation timings have been
+adjusted to the video. On every other row the cue boundaries are provisional. The
+timings API returns them either way — `statusTijdAnnotatie` is the only thing in the
+response that distinguishes them — so **any analysis that compares tiers by time must
+pass `mcpStatusTijdAnnotatie=Klaar` first**, or it is measuring the clock rather than
+the language.
+
+It was 410 of 739 baked videos (406 of 724 sentences) on 2026-09-03, and grows as
+annotation work continues. Measured on the un-adjusted half, cross-tier agreement
+figures come out almost identical in aggregate but sense disambiguation drops from
+77.3% to 71.0% — the metric that depends on cues being paired precisely is exactly the
+one that degrades.
+
+Two caveats on the flag itself, both measured 2026-09-03: four Klaar videos
+(`M20260227_5965`, `M20260227_5962`, `M20260227_5973`, `M20260223_4913`) still have
+gloss tiers whose every boundary is a multiple of 500 ms, which is the signature of a
+tier that was never adjusted; and the separate `mcp_status_tijd_annotatie_gvg` column
+is never `Klaar` anywhere in the corpus (643 empty, 95 "Check nodig", 1 "Niet Klaar"),
+so if that column gates the Gebaar-voor-gebaar tier's own timings, no sentence has both
+tiers signed off.
+
 ### Gloss senses
 
 Each cue in `glosses` carries a `senses` array — the meanings Signbank records

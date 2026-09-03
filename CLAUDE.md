@@ -114,6 +114,17 @@ command nor PHP's `exec('find ...')`. Enforced project-wide rather than
 re-litigated per directory, including for `BB_EAF_DIR`, which is not itself on
 the mount.
 
+**Only `Status tijd annotatie = Klaar` has adjusted cue times.** The other rows carry
+provisional boundaries, so any analysis that compares tiers by time — gloss cue
+against Gebaar-voor-gebaar cue, say — must filter on
+`mcpStatusTijdAnnotatie=Klaar` first or it is measuring the clock rather than the
+language. It was 410 of 739 baked videos on 2026-09-03 and grows. The cue times are
+still returned for non-Klaar rows, and nothing in the response marks them as
+provisional beyond `statusTijdAnnotatie` itself, so this is easy to get wrong.
+Note also that a handful of Klaar rows still carry untouched 500 ms grid timings, and
+that the separate `mcp_status_tijd_annotatie_gvg` column is never `Klaar` anywhere in
+the corpus.
+
 **State every count's unit: videos or sentences.** The MCP status columns live on
 the `sentences` table, but every row `listMocapFiles` returns is a `video`, and
 one sentence can have several baked takes. "X sentences are Klaar" and "X videos

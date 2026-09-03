@@ -315,7 +315,12 @@
               <tr>
                 <td><code>mcpStatusTijdAnnotatie</code></td>
                 <td>string</td>
-                <td><code>Klaar</code>, <code>Check nodig</code> or <code>Niet Klaar</code>.</td>
+                <td>
+                  <code>Klaar</code>, <code>Check nodig</code> or <code>Niet Klaar</code>.
+                  <strong>Pass <code>Klaar</code> for any work that depends on the cue
+                  times being accurate</strong> — only those sentences have had their
+                  annotation timings adjusted to the video.
+                </td>
               </tr>
               <tr>
                 <td><code>page</code></td>
@@ -427,6 +432,15 @@
           check before using it. A fourth tier (<code>_Handvorm.srt</code>) exists for
           only a handful of bases and is not exposed.
         </p>
+
+        <div class="alert alert-warning py-2 px-3">
+          <strong>Comparing tiers? Filter to Klaar first.</strong>
+          Add <code>mcpStatusTijdAnnotatie=Klaar</code>. Only those sentences have their
+          annotation timings adjusted to the video; on the rest the cue boundaries are
+          still provisional, so lining one tier up against another measures the clock
+          rather than the language. It is currently 410 of 739 baked videos, and it grows
+          as annotation work continues.
+        </div>
 
         <h3 class="h5 mt-4">Glosses and senses</h3>
         <p>
