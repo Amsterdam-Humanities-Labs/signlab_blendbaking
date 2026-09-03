@@ -449,6 +449,187 @@ PHP
         unlink($tmp . '/A.srt'); rmdir($tmp);
     }
 
+    /** Writes a miniature glosses_transformed.json and returns its path. */
+    private function writeFakeSensesExport($entries) {
+        $path = sys_get_temp_dir() . '/bbsenses_' . getmypid() . '_' . mt_rand(1000, 9999) . '.json';
+        $wrapped = [];
+        $id = 1000;
+        foreach ($entries as $gloss => $senses) {
+            $entry = ['Annotation ID Gloss: Dutch' => $gloss];
+            if ($senses !== null) {
+                $numbered = [];
+                foreach (array_values($senses) as $i => $s) { $numbered[(string)($i + 1)] = $s; }
+                $entry['Senses: Dutch'] = $numbered;
+            }
+            $wrapped[] = [(string)$id++ => $entry];
+        }
+        file_put_contents($path, json_encode($wrapped));
+        return $path;
+    }
+
+    public function testSensesIndexMapsGlossToSenses() {
+        $path = $this->writeFakeSensesExport([
+            'HUILEN-A' => ['teleurgesteld, verdriet', 'huilen'],
+            'VLEES-B'  => ['vlees'],
+        ]);
+        $index = gloss_senses_index($path);
+
+        $this->assertEquals(['teleurgesteld, verdriet', 'huilen'],
+            gloss_senses_lookup($index, 'HUILEN-A'), "senses come back in export order");
+        $this->assertEquals(['vlees'], gloss_senses_lookup($index, 'VLEES-B'), "single sense");
+        unlink($path);
+    }
+
+    public function testSensesLookupUsesExactCueNotBaseGloss() {
+        // Signbank carries HUILEN-A but no HUILEN, so folding before lookup
+        // would lose almost every match in the corpus.
+        $path = $this->writeFakeSensesExport(['HUILEN-A' => ['huilen']]);
+        $index = gloss_senses_index($path);
+
+        $this->assertEquals(['huilen'], gloss_senses_lookup($index, 'HUILEN-A'), "exact variant resolves");
+        $this->assertEquals([], gloss_senses_lookup($index, 'HUILEN'), "folded base gloss does not");
+        unlink($path);
+    }
+
+    public function testSensesLookupFallsBackOnCase() {
+        // The corpus contains annotation typos that differ from Signbank only
+        // in case: PT-1HAND and Pt-1hand for PT-1hand.
+        $path = $this->writeFakeSensesExport(['PT-1hand' => ['daar, dat, deze']]);
+        $index = gloss_senses_index($path);
+
+        $this->assertEquals(['daar, dat, deze'], gloss_senses_lookup($index, 'PT-1hand'), "exact");
+        $this->assertEquals(['daar, dat, deze'], gloss_senses_lookup($index, 'PT-1HAND'), "uppercased typo");
+        $this->assertEquals(['daar, dat, deze'], gloss_senses_lookup($index, 'Pt-1hand'), "mixed-case typo");
+        unlink($path);
+    }
+
+    public function testSensesLookupWillNotGuessBetweenCaseCollisions() {
+        // Signbank currently has no two glosses differing only by case. If one
+        // ever appears, the fallback must return nothing rather than pick
+        // whichever entry happened to be parsed first.
+        $path = $this->writeFakeSensesExport([
+            'KAT'  => ['kat'],
+            'Kat'  => ['iemands naam'],
+        ]);
+        $index = gloss_senses_index($path);
+
+        $this->assertEquals(['kat'], gloss_senses_lookup($index, 'KAT'), "exact match still works");
+        $this->assertEquals(['iemands naam'], gloss_senses_lookup($index, 'Kat'), "other exact match too");
+        $this->assertEquals([], gloss_senses_lookup($index, 'kAt'), "ambiguous case fallback resolves to nothing");
+        unlink($path);
+    }
+
+    public function testSensesIndexTreatsMissingAndUnknownDifferently() {
+        // A gloss in Signbank with no senses (nvt is the real example) and a
+        // gloss absent from Signbank both yield [], but only the first is
+        // present in the index — the distinction has to survive the build.
+        $path = $this->writeFakeSensesExport(['nvt' => null, 'VLEES-B' => ['vlees']]);
+        $index = gloss_senses_index($path);
+
+        $this->assertTrue(array_key_exists('nvt', $index['exact']), "senseless gloss is still indexed");
+        $this->assertEquals([], gloss_senses_lookup($index, 'nvt'), "and looks up as no senses");
+        $this->assertTrue(!array_key_exists('PO+PT', $index['exact']), "absent gloss is not indexed");
+        $this->assertEquals([], gloss_senses_lookup($index, 'PO+PT'), "and also looks up as no senses");
+        unlink($path);
+    }
+
+    public function testSensesIndexSurvivesAMissingOrBrokenExport() {
+        $empty = ['exact' => [], 'ci' => []];
+        $this->assertEquals($empty, gloss_senses_index('/nonexistent/nope.json'), "missing file");
+        $this->assertEquals([], gloss_senses_lookup($empty, 'HUILEN-A'), "lookup on an empty index");
+        $this->assertEquals([], gloss_senses_lookup($empty, ''), "empty gloss");
+
+        $path = sys_get_temp_dir() . '/bbsenses_broken_' . getmypid() . '.json';
+        file_put_contents($path, 'not json at all');
+        $this->assertEquals($empty, gloss_senses_index($path), "unparsable file");
+        unlink($path);
+    }
+
+    public function testSensesExportShippedWithTheRepoResolvesRealCues() {
+        require_once __DIR__ . '/../api.php';
+        // Guards the checked-in export itself, not just the parser: a truncated
+        // or wrong-shaped copy would leave every gloss senseless with no error.
+        $this->assertTrue(file_exists(BB_SENSES), "glosses_transformed.json is checked in");
+
+        $index = gloss_senses_index(BB_SENSES);
+        $this->assertTrue(count($index['exact']) > 7000,
+            "export holds the full vocabulary (got " . count($index['exact']) . ")");
+        $this->assertTrue(count(gloss_senses_lookup($index, 'HUILEN-A')) > 0,
+            "a known corpus cue resolves to senses");
+        $this->assertTrue(count(gloss_senses_lookup($index, 'PT-1HAND')) > 0,
+            "the uppercase PT-1hand typo resolves via the case fallback");
+    }
+
+    public function testSrtPathFindsTheOtherAnnotationTiers() {
+        require_once __DIR__ . '/../api.php';
+        $base = 'M20260506_0579';
+
+        $nl  = bb_srt_path($base, BB_NL_SUFFIX);
+        $gvg = bb_srt_path($base, BB_GVG_SUFFIX);
+        $this->assertTrue(is_string($nl)  && substr($nl,  -strlen(BB_NL_SUFFIX))  === BB_NL_SUFFIX,
+            "Nederlands tier resolves");
+        $this->assertTrue(is_string($gvg) && substr($gvg, -strlen(BB_GVG_SUFFIX)) === BB_GVG_SUFFIX,
+            "Gebaar-voor-gebaar tier resolves");
+
+        // The default argument must stay the gloss tier: the ZIP download and
+        // the gloss index both rely on it.
+        $this->assertEquals(bb_srt_path($base, BB_SRT_SUFFIX), bb_srt_path($base),
+            "default suffix is still the gloss tier");
+
+        $this->assertEquals(null, bb_srt_path('../../etc/passwd', BB_NL_SUFFIX),
+            "traversal is rejected on the other tiers too");
+    }
+
+    public function testSidecarSrtUrlSwapsTheTierSuffix() {
+        require_once __DIR__ . '/../api.php';
+        $base = 'M20260506_0579';
+        $gloss = 'https://signcollect.nl/zin/eaf/zin/' . $base . BB_SRT_SUFFIX;
+
+        $this->assertEquals(
+            'https://signcollect.nl/zin/eaf/zin/' . $base . BB_NL_SUFFIX,
+            bb_sidecar_srt_url($base, $gloss, BB_NL_SUFFIX),
+            "Nederlands URL is the gloss URL with the suffix swapped"
+        );
+        $this->assertEquals(
+            'https://signcollect.nl/zin/eaf/zin/' . $base . BB_GVG_SUFFIX,
+            bb_sidecar_srt_url($base, $gloss, BB_GVG_SUFFIX),
+            "Gebaar-voor-gebaar URL likewise"
+        );
+    }
+
+    public function testSidecarSrtUrlIsNullWhenTheFileIsAbsent() {
+        require_once __DIR__ . '/../api.php';
+        $base = 'M20260506_0579';
+        $gloss = 'https://signcollect.nl/zin/eaf/zin/' . $base . BB_SRT_SUFFIX;
+
+        // A URL that 404s is worse than a null, so absence on disk wins.
+        $this->assertEquals(null,
+            bb_sidecar_srt_url($base, $gloss, '_DefinitelyNotATier.srt'),
+            "unknown tier yields null, not a broken URL");
+        $this->assertEquals(null,
+            bb_sidecar_srt_url('definitely_not_a_real_base_xyz', $gloss, BB_NL_SUFFIX),
+            "unknown base yields null");
+        $this->assertEquals(null,
+            bb_sidecar_srt_url('../../etc/passwd', $gloss, BB_NL_SUFFIX),
+            "traversal yields null");
+        $this->assertEquals(null,
+            bb_sidecar_srt_url($base, null, BB_NL_SUFFIX),
+            "no upstream gloss URL to derive from");
+        $this->assertEquals(null,
+            bb_sidecar_srt_url($base, 'https://example.org/whatever.txt', BB_NL_SUFFIX),
+            "gloss URL that does not end in the gloss suffix");
+    }
+
+    public function testSensesCacheIsIsolatedWithGlossCache() {
+        require_once __DIR__ . '/../api.php';
+        // Same invariant as testVideoCacheIsIsolatedWithGlossCache below.
+        $this->assertEquals(
+            dirname(BB_CACHE),
+            dirname(BB_SENSES_CACHE),
+            "BB_SENSES_CACHE must sit beside BB_CACHE so tests isolate both at once"
+        );
+    }
+
     public function testVideoCacheIsIsolatedWithGlossCache() {
         require_once __DIR__ . '/../api.php';
         // bbRunAgainstFakeUpstream isolates itself by pre-defining BB_CACHE

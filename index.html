@@ -231,8 +231,8 @@
         <h2 class="h4">Gloss timings API</h2>
         <p class="text-muted">
           Get the gloss SRT timings of every baked sentence as JSON — one record per
-          sentence, with each sign's gloss, its start and end time, and a link to the
-          matching FBX animation.
+          sentence, with each sign's gloss, its Signbank senses, its start and end time,
+          links to all three annotation tiers, and the matching FBX animation.
         </p>
 
         <h3 class="h5 mt-4">Connecting</h3>
@@ -343,7 +343,12 @@
       "statusTijdAnnotatie": null,
       "fbxUrl": "https://signcollect.nl/gebarenoverleg_media/fbx/post_processed/M20260506_0579_260713_0.fbx",
       "fbxIsLatestTake": true,
-      "srtUrl": "https://signcollect.nl/zin/eaf/zin/M20260506_0579_Signbank_ID_glossen.srt",
+
+      // The three annotation tiers, all for this same base.
+      "srtUrl":        ".../M20260506_0579_Signbank_ID_glossen.srt",   // glosses
+      "nederlandsSrt": ".../M20260506_0579_Nederlands.srt",            // sentence
+      "gvgSrt":        ".../M20260506_0579_Gebaar-voor-gebaar.srt",    // sign-by-sign Dutch
+
       "glossCount": 4,
       "firstStartMs": 1186,   // start of the first sign
       "lastEndMs": 3842,      // end of the last sign
@@ -353,6 +358,9 @@
           "index": 2,               // the cue's number in the SRT
           "gloss": "PT-1HAND",      // exactly as annotated
           "baseGloss": "PT-1HAND",  // variant letter folded off
+          "senses": [               // Signbank meanings for this gloss
+            "daar, dat, deze, die, dit, het, hij, hun, zij, jij, jou"
+          ],
           "start": "00:00:02,188",  // raw SRT timecodes
           "end":   "00:00:02,798",
           "startMs": 2188,          // same instants in milliseconds
@@ -363,6 +371,92 @@
     }
   ]
 }</code></pre>
+
+        <h3 class="h5 mt-4">The three annotation tiers</h3>
+        <p>
+          ELAN exports one SRT per annotation tier. All three are returned for every
+          sentence, and all three share one timeline, so they can be laid over each other
+          directly:
+        </p>
+        <div class="table-responsive">
+          <table class="table table-sm table-bordered">
+            <thead><tr><th>Field</th><th>Tier</th><th>What's in it</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><code>srtUrl</code></td>
+                <td>Signbank ID glossen</td>
+                <td>
+                  One cue per sign, the gloss as annotated. This is the tier
+                  <code>glosses</code> is parsed from — the field keeps its original name
+                  so existing clients are unaffected.
+                </td>
+              </tr>
+              <tr>
+                <td><code>nederlandsSrt</code></td>
+                <td>Nederlands</td>
+                <td>
+                  The Dutch sentence as a single cue spanning the whole utterance. Same
+                  text as the <code>zin</code> field, but timed.
+                </td>
+              </tr>
+              <tr>
+                <td><code>gvgSrt</code></td>
+                <td>Gebaar-voor-gebaar</td>
+                <td>
+                  Sign-by-sign Dutch — one cue per sign, roughly parallel to the gloss
+                  cues, giving the word each sign stands for <em>in this sentence</em>
+                  rather than the sign's dictionary meanings.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="text-muted">
+          These are links, not parsed cues — fetch and parse them if you need their
+          timings. Both are present for every baked sentence in the corpus today, but a
+          field is <code>null</code> rather than a broken link when a tier is missing, so
+          check before using it. A fourth tier (<code>_Handvorm.srt</code>) exists for
+          only a handful of bases and is not exposed.
+        </p>
+
+        <h3 class="h5 mt-4">Glosses and senses</h3>
+        <p>
+          Each gloss carries a <code>senses</code> array: the meanings Signbank records
+          for that sign, looked up in the <code>glosses_transformed.json</code> export
+          shipped with this tool. A sense is a comma-separated list of near-synonyms
+          exactly as Signbank writes it, and a sign can have several:
+        </p>
+        <pre class="api-code"><code>"gloss": "BINNEN-A",
+"senses": [
+  "entree, toegang, toegankelijk",
+  "binnen, erin, in, van binnen"
+]</code></pre>
+        <ul>
+          <li>
+            The lookup is on the <strong>exact</strong> annotated gloss, not the folded
+            <code>baseGloss</code> — Signbank has <code>HUILEN-A</code> but no
+            <code>HUILEN</code>. A handful of cues differ from Signbank only in case
+            (<code>PT-1HAND</code> for <code>PT-1hand</code>); those fall back to a
+            case-insensitive match, which is unambiguous because no two Signbank glosses
+            differ only by case.
+          </li>
+          <li>
+            <code>senses</code> is <code>[]</code>, never <code>null</code>, when nothing
+            is found. That covers two different situations: the gloss is in Signbank but
+            carries no senses (<code>nvt</code> is the common one), or it isn't in
+            Signbank at all (<code>PO+PT</code>, <code>-</code>, and a long tail of
+            one-off annotations).
+          </li>
+          <li>
+            Coverage as of 2026-09-03: 98.4% of distinct cues resolve. Excluding
+            <code>nvt</code>, which is a real cue meaning "no gloss assigned here", 98.4%
+            of gloss occurrences carry senses.
+          </li>
+          <li>
+            The export is a point-in-time copy of Signbank, refreshed by hand. It can lag
+            newly added signs.
+          </li>
+        </ul>
 
         <h3 class="h5 mt-4">Things worth knowing</h3>
         <ul>
@@ -424,6 +518,12 @@ console.log(sentence.zin, sentence.fbxUrl);
 // Which sign is showing at a given playback position?
 function glossAt(ms) {
   return sentence.glosses.find(g =&gt; g.startMs &lt;= ms &amp;&amp; ms &lt; g.endMs) || null;
+}
+
+// ...and what does it mean?
+const g = glossAt(3000);
+if (g) {
+  console.log(g.gloss, g.senses.length ? g.senses[0] : '(no senses in Signbank)');
 }</code></pre>
 
         <p class="mb-1"><strong>Python</strong> — page through every sentence containing a gloss:</p>
@@ -447,7 +547,8 @@ def sentences(**params):
 for s in sentences(gloss='HUILEN'):
     for g in s['glosses']:
         if g['baseGloss'] == 'HUILEN':
-            print(s['base'], g['gloss'], g['start'], '-&gt;', g['end'])</code></pre>
+            print(s['base'], g['gloss'], g['start'], '-&gt;', g['end'],
+                  '|', '; '.join(g['senses']))</code></pre>
 
         <h3 class="h5 mt-4">Try it</h3>
         <div class="row g-2 align-items-end mb-2">

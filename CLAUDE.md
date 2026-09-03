@@ -31,6 +31,7 @@ Do not add a third. In particular, do not `require` anything out of `/web/zin`.
 | `api.php` | Every endpoint. Defines functions on include; only dispatches on `$_GET['action']` when not on CLI, so tests can `require_once` it. |
 | `srtGloss.php` | Pure SRT/gloss library. No output, no I/O beyond reading paths it is handed. |
 | `categories.json` | Hand-curated gloss → category map. Checked in, never auto-generated. |
+| `glosses_transformed.json` | Signbank export (~11 MB), source of the `senses` lookup. A hand-copied snapshot; no generator here. |
 | `cache/` | Git-ignored. Always safe to delete; repopulates on next request. |
 | `tests/`, `scripts/` | CLI only. Both carry an `.htaccess` denying web access. |
 
@@ -80,8 +81,11 @@ every caller — this is the one failure mode nothing downstream can detect.
 fixture isolates itself by pre-defining `BB_CACHE` alone. A cache anchored to
 `__DIR__` instead gets the fixture's three fake videos written into the real
 `cache/` and served to production for a whole TTL. This already happened once
-when `BB_VIDEO_CACHE` was added; `testVideoCacheIsIsolatedWithGlossCache` guards
-it now. Any new cache file must be derived the same way.
+when `BB_VIDEO_CACHE` was added. Two things guard it now: a per-constant
+assertion (`testVideoCacheIsIsolatedWithGlossCache`,
+`testSensesCacheIsIsolatedWithGlossCache`) and `TestRunner.php`, which snapshots
+`cache/` before and after the run and fails the suite on any new file. Adding a
+cache constant means adding its assertion too.
 
 **Bump `BB_INDEX_SCHEMA` when the cached aggregate's shape changes.** Otherwise a
 cache written by older code is served with the new fields missing until the TTL
@@ -138,6 +142,32 @@ A form POST with one hidden input per base is silently truncated by PHP's
 `max_input_vars` (1000 on this host) *before* `api.php` runs, which defeats the
 `TRUNCATED.txt` protection — the excess bases never arrive to be counted as
 excess. `timings` accepts `bases` the same way for the same reason.
+
+**There are three annotation tiers, and `srtUrl` is only one of them.** ELAN
+exports `_Signbank_ID_glossen.srt` (one cue per sign, the glosses),
+`_Nederlands.srt` (the sentence as one cue) and `_Gebaar-voor-gebaar.srt`
+(sign-by-sign Dutch) per base, plus `_Handvorm.srt` for a small minority.
+`timings` returns the first three as `srtUrl`, `nederlandsSrt` and `gvgSrt`.
+`srtUrl` keeps its name and its gloss-tier meaning because clients depend on it
+— do not repurpose it into an object of tiers.
+
+The directory also holds timestamped `*_backup_*.srt` copies of every tier.
+`bb_srt_path()` matches on an exact suffix, which is the only thing keeping
+those out. Never loosen it into a prefix or glob match.
+
+**Senses are looked up on the exact cue, never the folded base gloss.** Signbank
+has `HUILEN-A` but no `HUILEN`, so folding first loses almost every match.
+`gloss_senses_lookup()` falls back to a case-insensitive match for the handful
+of annotation typos that differ from Signbank only in case (`PT-1HAND` for
+`PT-1hand`); this is safe only because Signbank itself has zero
+case-insensitive collisions, and `gloss_senses_index()` drops any key that
+gains one rather than guessing. The fallback is a lookup convenience and does
+**not** mean gloss case is insignificant anywhere else — `srt_base_gloss()`
+stays case-sensitive.
+
+`senses` is always an array, `[]` when nothing resolves. That conflates "in
+Signbank with no senses" (`nvt`) with "not in Signbank" (`PO+PT`, `-`); the
+index keeps the distinction internally if it is ever needed in the response.
 
 ## Gloss folding
 

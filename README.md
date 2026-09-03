@@ -100,8 +100,10 @@ anyway.
 
 - **`timings`** — the public API: gloss cue timings per sentence. One record per
   baked video, each carrying the sentence text, thema, take number, `fbxUrl`,
-  `srtUrl`, and a `glosses` list with every cue's `gloss`, folded `baseGloss`,
-  raw `start`/`end` timecodes, and integer `startMs`/`endMs`/`durationMs`.
+  links to all three annotation tiers (`srtUrl`, `nederlandsSrt`, `gvgSrt`), and
+  a `glosses` list with every cue's `gloss`, folded `baseGloss`, Signbank
+  `senses`, raw `start`/`end` timecodes, and integer
+  `startMs`/`endMs`/`durationMs`.
 
   All params optional: `base`/`bases` (comma-joined), `sentenceId`, `gloss` (a
   *base* gloss), `search`, `mcpStatusTijdAnnotatie`, `page`, `limit` (default
@@ -120,6 +122,67 @@ anyway.
   silently shorter list.
 
   Documented for consumers in `index.html`'s API tab.
+
+### The three annotation tiers
+
+ELAN exports one SRT per annotation tier into `BB_EAF_DIR`, all sharing one
+timeline:
+
+| Suffix | Field | Contents | Coverage (2026-09-03) |
+|---|---|---|---|
+| `_Signbank_ID_glossen.srt` | `srtUrl` | One cue per sign, the gloss as annotated | 739 / 739 |
+| `_Nederlands.srt` | `nederlandsSrt` | The Dutch sentence as one cue | 739 / 739 |
+| `_Gebaar-voor-gebaar.srt` | `gvgSrt` | Sign-by-sign Dutch, roughly parallel to the gloss cues | 739 / 739 |
+| `_Handvorm.srt` | *(not exposed)* | Handshape annotation | 15 / 739 |
+
+`srtUrl` keeps its name and its gloss-tier meaning — clients depend on it, so
+it was not repurposed into an object of tiers. The two new fields are derived
+from upstream's `glossSrtUrl` by swapping the suffix, so all three links follow
+whatever host upstream serves the gloss SRT from. Unlike the FBX, they are
+checked against the filesystem first: `BB_EAF_DIR` is local, so the check is
+free, and a `null` is more useful to a client than a URL that 404s.
+
+Note the directory also holds timestamped `*_backup_*.srt` copies of every
+tier. `bb_srt_path()` matches on an *exact* suffix, which is the only thing
+keeping those out of both this and the ZIP download. Do not loosen it into a
+prefix or glob match.
+
+### Gloss senses
+
+Each cue in `glosses` carries a `senses` array — the meanings Signbank records
+for that sign — looked up in `glosses_transformed.json`, an ~11 MB Signbank
+export checked in beside `categories.json`. It is a hand-copied snapshot
+(`cp /web/glosses_transformed.json .`); there is no generator here, and it can
+lag newly added signs.
+
+The lookup key is the **exact annotated gloss**, not the folded `baseGloss`:
+Signbank has `HUILEN-A` but no `HUILEN`, so folding first would lose almost
+every match. `gloss_senses_lookup()` then falls back to a case-insensitive
+match, which recovers the handful of annotation typos that differ from Signbank
+only in case (`PT-1HAND` for `PT-1hand`, `zonde` for `ZONDE`, `in-f` for
+`IN-F`). That fallback is only safe because Signbank itself contains zero
+glosses differing only by case; `gloss_senses_index()` drops any lowercase key
+that more than one gloss spells, so a future collision returns nothing rather
+than guessing. **This does not mean gloss case is insignificant elsewhere** —
+`srt_base_gloss()` stays case-sensitive and `PT-1hand`/`PT-1HAND` remain
+separate rows in the gloss index and in `categories.json`.
+
+`senses` is always an array, `[]` when nothing resolves. That flattens two
+distinct situations — a gloss that is in Signbank but carries no senses
+(`nvt`, 168 such entries in the export) and one that is absent entirely
+(`PO+PT`, `-`) — though `gloss_senses_index()` keeps the distinction internally
+if it is ever wanted in the response.
+
+The distilled index is cached to `cache/senses_index.json` and invalidated by
+**mtime, not TTL**: the export is a checked-in file that only changes when
+someone copies a new one in, so a TTL would either re-parse 11 MB on a schedule
+for nothing or serve a stale index after an update. Parsing the full export
+costs ~0.11 s and ~48 MB; the distilled index is 0.27 MB and ~0.005 s.
+
+Coverage as of 2026-09-03, across 739 baked videos: 98.4% of the 901 distinct
+cues resolve to a Signbank entry. Excluding `nvt` — a real cue meaning "no
+gloss assigned to this stretch" — 98.4% of gloss occurrences carry senses. The
+largest genuine gap is `PO+PT` (43 occurrences, absent from Signbank).
 - **`glosses`** — the aggregated gloss index (see below) plus `categoryMap`.
   Param `refresh=1` forces a rebuild instead of serving the cache. Backs the
   Glossen tab.
@@ -256,8 +319,10 @@ base-gloss folding, aggregation, ZIP truncation, cache isolation) and
 `TestCategories` (the categorization pattern rules, and cross-checks against
 `categories.json` itself). Exit code is 0 iff every test passed.
 
-`cache/` must still be empty after a run — if it isn't, a fixture is leaking
-into the real cache. See `BB_VIDEO_CACHE` above.
+`TestRunner.php` snapshots `cache/` before and after the run and fails the
+suite on any file that appeared, so a fixture leaking into the real cache is
+caught automatically rather than by remembering to look. See `BB_VIDEO_CACHE`
+above for why that matters.
 
 `tests/` and `scripts/` both carry a `.htaccess` denying all web access —
 CLI-only. `TestRunner.php`'s fixture helper `shell_exec`s `php -S ... &` and

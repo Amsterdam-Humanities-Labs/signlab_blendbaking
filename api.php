@@ -17,6 +17,14 @@ require_once __DIR__ . '/srtGloss.php';
 // Production never pre-defines them, so behaviour is unchanged there.
 if (!defined('BB_EAF_DIR'))    define('BB_EAF_DIR',    '/web/zin/eaf/zin/');
 if (!defined('BB_SRT_SUFFIX')) define('BB_SRT_SUFFIX', '_Signbank_ID_glossen.srt');
+
+// The other two annotation tiers ELAN exports beside the gloss tier. Both are
+// present for every baked base in the corpus (739/739 as of 2026-09-03);
+// _Handvorm.srt also exists but only for 15, so it is not exposed.
+// BB_SRT_SUFFIX stays the gloss tier: it is what bb_srt_path defaults to and
+// what the ZIP download bundles, and neither of those changes here.
+if (!defined('BB_NL_SUFFIX'))  define('BB_NL_SUFFIX',  '_Nederlands.srt');
+if (!defined('BB_GVG_SUFFIX')) define('BB_GVG_SUFFIX', '_Gebaar-voor-gebaar.srt');
 if (!defined('BB_ZIN_API'))    define('BB_ZIN_API',    'https://signcollect.nl/zin/getZinnen.php');
 if (!defined('BB_CACHE'))      define('BB_CACHE',      __DIR__ . '/cache/gloss_index.json');
 if (!defined('BB_CATEGORIES')) define('BB_CATEGORIES', __DIR__ . '/categories.json');
@@ -34,6 +42,12 @@ if (!defined('BB_MEDIA_ORIGIN')) define('BB_MEDIA_ORIGIN', 'https://signcollect.
 if (!defined('BB_TIMINGS_LIMIT'))     define('BB_TIMINGS_LIMIT',     25);
 if (!defined('BB_TIMINGS_MAX_LIMIT')) define('BB_TIMINGS_MAX_LIMIT', 200);
 
+// Signbank export used to translate a gloss to its senses. Checked in beside
+// categories.json rather than read from /web, so the tool stays standalone and
+// the senses a given commit serves are the senses that commit was tested
+// against. Refresh it with a plain copy; there is no generator here.
+if (!defined('BB_SENSES')) define('BB_SENSES', __DIR__ . '/glosses_transformed.json');
+
 // Cache of the fully-paged, unfiltered video list, shared by `glosses` and
 // `timings`. Without it, paging through timings re-fetches all of upstream on
 // every single request.
@@ -44,6 +58,12 @@ if (!defined('BB_TIMINGS_MAX_LIMIT')) define('BB_TIMINGS_MAX_LIMIT', 200);
 // upstream into the real cache/ and poison production for a whole TTL. Any new
 // cache file added here must be derived the same way.
 if (!defined('BB_VIDEO_CACHE')) define('BB_VIDEO_CACHE', dirname(BB_CACHE) . '/videos.json');
+
+// Compact gloss => senses index distilled from BB_SENSES. Parsing the 10.5 MB
+// export costs ~0.11s and ~48 MB of memory per request; the distilled index is
+// 0.27 MB and ~0.005s. Derived from dirname(BB_CACHE) for the same isolation
+// reason as BB_VIDEO_CACHE above.
+if (!defined('BB_SENSES_CACHE')) define('BB_SENSES_CACHE', dirname(BB_CACHE) . '/senses_index.json');
 
 /**
  * Validate a video base filename. Returns the base, or null if unsafe.
@@ -60,13 +80,24 @@ function bb_safe_base($base) {
 }
 
 /**
- * Absolute path to a base's gloss SRT, confirmed to sit inside BB_EAF_DIR.
+ * Absolute path to one of a base's SRT tiers, confirmed inside BB_EAF_DIR.
+ *
+ * $suffix selects the tier and defaults to the gloss tier, so every existing
+ * caller keeps its behaviour. It is only ever passed one of the BB_*_SUFFIX
+ * constants — never user input — so the traversal guard on $base is still the
+ * only untrusted-input check that matters.
+ *
+ * Note the directory also holds timestamped *_backup_*.srt copies of each
+ * tier. Matching on an exact suffix is what keeps those out; do not loosen it
+ * into a prefix or glob match.
  */
-function bb_srt_path($base) {
+function bb_srt_path($base, $suffix = null) {
+    if ($suffix === null) { $suffix = BB_SRT_SUFFIX; }
+
     $base = bb_safe_base($base);
     if ($base === null) { return null; }
 
-    $candidate = BB_EAF_DIR . $base . BB_SRT_SUFFIX;
+    $candidate = BB_EAF_DIR . $base . $suffix;
     $real = realpath($candidate);
     if ($real === false) { return null; }
 
@@ -86,6 +117,59 @@ function bb_absolute_url($url) {
     if (!is_string($url) || $url === '') { return null; }
     if (preg_match('#^https?://#i', $url)) { return $url; }
     return BB_MEDIA_ORIGIN . '/' . ltrim($url, '/');
+}
+
+/**
+ * URL of another annotation tier's SRT for a base, or null if there isn't one.
+ *
+ * Derived from upstream's glossSrtUrl by swapping the tier suffix, rather than
+ * rebuilt from a hardcoded directory: that keeps the sidecar links on whatever
+ * host upstream is serving the gloss SRT from, with one place to change if it
+ * ever moves. Same reasoning as bb_fbx_url deriving from glbUrl.
+ *
+ * Unlike the FBX, this one checks the file is actually on disk first —
+ * BB_EAF_DIR is local, so the check is free, and _Handvorm.srt exists for only
+ * a fraction of bases, which is a good reminder that tier coverage is not
+ * guaranteed. A null is more useful to a client than a URL that 404s.
+ */
+function bb_sidecar_srt_url($base, $glossSrtUrl, $suffix) {
+    if (bb_srt_path($base, $suffix) === null) { return null; }
+    if (!is_string($glossSrtUrl) || $glossSrtUrl === '') { return null; }
+
+    $tail = strlen(BB_SRT_SUFFIX);
+    if (substr($glossSrtUrl, -$tail) !== BB_SRT_SUFFIX) { return null; }
+
+    return bb_absolute_url(substr($glossSrtUrl, 0, -$tail) . $suffix);
+}
+
+/**
+ * The gloss => senses index, distilled from BB_SENSES and cached.
+ *
+ * Invalidated by mtime rather than a TTL: BB_SENSES is a checked-in file that
+ * only changes when someone copies a new export in, so a TTL would either
+ * re-parse 10.5 MB on a schedule for no reason or serve a stale index after an
+ * update. Comparing mtimes does neither.
+ */
+function bb_senses_index($force = false) {
+    if (!$force && file_exists(BB_SENSES_CACHE)
+        && (!file_exists(BB_SENSES) || filemtime(BB_SENSES_CACHE) >= filemtime(BB_SENSES))) {
+        $decoded = json_decode(@file_get_contents(BB_SENSES_CACHE), true);
+        if (is_array($decoded) && isset($decoded['exact']) && isset($decoded['ci'])) {
+            return $decoded;
+        }
+    }
+
+    $index = gloss_senses_index(BB_SENSES);
+
+    // Never cache an empty index: a missing or unreadable export would
+    // otherwise pin "no gloss has senses" in place until someone noticed.
+    if (count($index['exact'])) {
+        $dir = dirname(BB_SENSES_CACHE);
+        if (!is_dir($dir)) { @mkdir($dir, 0775, true); }
+        @file_put_contents(BB_SENSES_CACHE, json_encode($index), LOCK_EX);
+    }
+
+    return $index;
 }
 
 /**
@@ -281,7 +365,7 @@ function bb_glosses($force = false) {
  * disagree with the number of records a client can actually page through, and
  * would hide a broken file behind a silently shorter list.
  */
-function bb_sentence_timings($row) {
+function bb_sentence_timings($row, $sensesIndex = null) {
     $base = $row['base'] ?? '';
 
     $glosses  = [];
@@ -297,6 +381,30 @@ function bb_sentence_timings($row) {
         } else {
             $glosses = srt_gloss_timings($contents);
         }
+    }
+
+    // Passed in by bb_timings so the index is loaded once per request rather
+    // than once per sentence; defaulted here so a direct caller still works.
+    if ($sensesIndex === null) { $sensesIndex = bb_senses_index(); }
+
+    // Looked up on the exact cue, not the folded base gloss: Signbank has
+    // HUILEN-A but no HUILEN, so folding first would lose almost every match.
+    //
+    // Rebuilt rather than appended so `senses` sits with the identity fields
+    // it belongs to instead of trailing the timing fields. srt_gloss_timings
+    // stays a pure timing parse and never learns about Signbank.
+    foreach ($glosses as $i => $g) {
+        $glosses[$i] = [
+            'index'      => $g['index'],
+            'gloss'      => $g['gloss'],
+            'baseGloss'  => $g['baseGloss'],
+            'senses'     => gloss_senses_lookup($sensesIndex, $g['gloss']),
+            'start'      => $g['start'],
+            'end'        => $g['end'],
+            'startMs'    => $g['startMs'],
+            'endMs'      => $g['endMs'],
+            'durationMs' => $g['durationMs'],
+        ];
     }
 
     // Null timecodes are excluded rather than coerced: min() over a list
@@ -323,7 +431,12 @@ function bb_sentence_timings($row) {
         // Carries over from the GLB the FBX is derived from: false means this
         // take was baked but a newer take of the same sentence exists unbaked.
         'fbxIsLatestTake' => isset($row['glbIsLatestTake']) ? (bool)$row['glbIsLatestTake'] : null,
+        // srtUrl keeps its name and its meaning — the gloss tier — because
+        // clients already depend on it. The other two tiers get their own
+        // fields rather than turning srtUrl into an object.
         'srtUrl'      => bb_absolute_url($row['glossSrtUrl'] ?? null),
+        'nederlandsSrt' => bb_sidecar_srt_url($base, $row['glossSrtUrl'] ?? null, BB_NL_SUFFIX),
+        'gvgSrt'        => bb_sidecar_srt_url($base, $row['glossSrtUrl'] ?? null, BB_GVG_SUFFIX),
         'glossCount'  => count($glosses),
         'firstStartMs' => count($starts) ? min($starts) : null,
         'lastEndMs'    => count($ends)   ? max($ends)   : null,
@@ -401,8 +514,11 @@ function bb_timings($opts) {
 
     $slice = array_slice($rows, ($page - 1) * $limit, $limit);
 
+    // Loaded once for the whole page, not per sentence.
+    $sensesIndex = bb_senses_index();
+
     $sentences = [];
-    foreach ($slice as $row) { $sentences[] = bb_sentence_timings($row); }
+    foreach ($slice as $row) { $sentences[] = bb_sentence_timings($row, $sensesIndex); }
 
     return [
         'success'   => true,

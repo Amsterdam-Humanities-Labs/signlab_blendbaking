@@ -128,6 +128,95 @@ function srt_gloss_timings($contents) {
 }
 
 /**
+ * Build a gloss -> senses lookup from a glosses_transformed.json export.
+ *
+ * The export is a list of single-key wrapper objects, each keyed by Signbank
+ * gloss id: [{"3808": {...}}, {"3809": {...}}, ...]. The field the SRT cues
+ * actually match is 'Annotation ID Gloss: Dutch' — not the lemma, and not the
+ * id — and the senses live under 'Senses: Dutch' as an object keyed "1", "2",
+ * … Those keys are numeric and in document order throughout the current
+ * export, so array_values() preserves sense order without a sort.
+ *
+ * Returns two maps. 'exact' is gloss => senses list. 'ci' is lowercased gloss
+ * => the one gloss that spells it, and it only contains keys that exactly one
+ * gloss spells: the current export has zero case-insensitive collisions, but
+ * if one ever appears, dropping the key makes the fallback return nothing
+ * rather than silently picking whichever entry was parsed first.
+ *
+ * An entry with no 'Senses: Dutch' (168 of 7,396 in the current export, `nvt`
+ * among them) maps to an empty list, which is different from being absent —
+ * the gloss exists in Signbank, it just carries no senses.
+ *
+ * @param string $path path to the JSON export
+ * @return array ['exact' => [gloss => string[]], 'ci' => [lowercase => gloss]]
+ */
+function gloss_senses_index($path) {
+    $empty = ['exact' => [], 'ci' => []];
+
+    if (!is_string($path) || !file_exists($path)) { return $empty; }
+    $raw = json_decode(@file_get_contents($path), true);
+    if (!is_array($raw)) { return $empty; }
+
+    $exact = [];
+    $spellings = [];
+
+    foreach ($raw as $wrapper) {
+        if (!is_array($wrapper)) { continue; }
+        foreach ($wrapper as $entry) {
+            if (!is_array($entry)) { continue; }
+
+            $gloss = $entry['Annotation ID Gloss: Dutch'] ?? null;
+            if (!is_string($gloss) || $gloss === '') { continue; }
+
+            $senses = $entry['Senses: Dutch'] ?? null;
+            $senses = is_array($senses)
+                ? array_values(array_filter($senses, 'is_string'))
+                : [];
+
+            // First spelling wins. The export has exactly one duplicated
+            // annotation gloss ("??"), and neither copy is more correct than
+            // the other, so this only needs to be deterministic.
+            if (!isset($exact[$gloss])) { $exact[$gloss] = $senses; }
+            $spellings[strtolower($gloss)][$gloss] = true;
+        }
+    }
+
+    $ci = [];
+    foreach ($spellings as $lower => $variants) {
+        if (count($variants) === 1) { $ci[$lower] = key($variants); }
+    }
+
+    return ['exact' => $exact, 'ci' => $ci];
+}
+
+/**
+ * Senses for one gloss: exact match first, then a case-insensitive fallback.
+ *
+ * The fallback exists because the corpus contains a handful of annotation
+ * typos that differ from Signbank only in case — PT-1HAND for PT-1hand,
+ * zonde for ZONDE, in-f for IN-F — 7 occurrences in total. Signbank itself
+ * has no two glosses differing only by case, so the fallback can never pick
+ * between two real signs.
+ *
+ * Note this is a lookup convenience only. It does NOT mean gloss case is
+ * insignificant: srt_base_gloss() stays case-sensitive, and PT-1hand and
+ * PT-1HAND remain separate rows in the gloss index and in categories.json.
+ *
+ * @return array list of sense strings; empty when the gloss is unknown
+ */
+function gloss_senses_lookup($index, $gloss) {
+    if (!is_string($gloss) || $gloss === '') { return []; }
+    if (isset($index['exact'][$gloss])) { return $index['exact'][$gloss]; }
+
+    $lower = strtolower($gloss);
+    if (isset($index['ci'][$lower])) {
+        return $index['exact'][$index['ci'][$lower]] ?? [];
+    }
+
+    return [];
+}
+
+/**
  * Aggregate glosses across a set of SRT files.
  *
  * @param array $files map of base filename => absolute SRT path
