@@ -31,7 +31,12 @@
  */
 
 if (!function_exists('sc_path')) {
-    foreach ([__DIR__ . '/../lib/paths.php',
+    // __DIR__/lib first, for a consumer sitting AT the docroot root: there
+    // ../lib is the root's parent, outside the deployment entirely. It costs
+    // nothing for the deeper consumers - /web/zin/lib does not exist, so they
+    // fall through to ../lib as before.
+    foreach ([__DIR__ . '/lib/paths.php',
+              __DIR__ . '/../lib/paths.php',
               __DIR__ . '/../../lib/paths.php',
               '/web/lib/paths.php'] as $sc_paths_candidate) {
         if (is_file($sc_paths_candidate)) {
