@@ -21,3 +21,9 @@ __pycache__/
 .mcp.json
 .playwright-mcp/
 .superpowers/
+
+# The Signbank gloss export is shared, not per-app.
+# It lives at /web/signbank_data/glosses_transformed.json, written by the
+# Signbank connector in menu_beta. Six duplicate copies were removed from
+# signlab_annotation-tool for the same reason.
+glosses_transformed.json

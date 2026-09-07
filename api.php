@@ -46,7 +46,7 @@ if (!defined('BB_TIMINGS_MAX_LIMIT')) define('BB_TIMINGS_MAX_LIMIT', 200);
 // categories.json rather than read from /web, so the tool stays standalone and
 // the senses a given commit serves are the senses that commit was tested
 // against. Refresh it with a plain copy; there is no generator here.
-if (!defined('BB_SENSES')) define('BB_SENSES', __DIR__ . '/glosses_transformed.json');
+if (!defined('BB_SENSES')) define('BB_SENSES', __DIR__ . '/signbank_data/glosses_transformed.json');
 
 // Cache of the fully-paged, unfiltered video list, shared by `glosses` and
 // `timings`. Without it, paging through timings re-fetches all of upstream on
