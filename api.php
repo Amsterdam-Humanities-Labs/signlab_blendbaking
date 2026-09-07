@@ -42,11 +42,31 @@ if (!defined('BB_MEDIA_ORIGIN')) define('BB_MEDIA_ORIGIN', 'https://signcollect.
 if (!defined('BB_TIMINGS_LIMIT'))     define('BB_TIMINGS_LIMIT',     25);
 if (!defined('BB_TIMINGS_MAX_LIMIT')) define('BB_TIMINGS_MAX_LIMIT', 200);
 
-// Signbank export used to translate a gloss to its senses. Checked in beside
-// categories.json rather than read from /web, so the tool stays standalone and
-// the senses a given commit serves are the senses that commit was tested
-// against. Refresh it with a plain copy; there is no generator here.
-if (!defined('BB_SENSES')) define('BB_SENSES', __DIR__ . '/signbank_data/glosses_transformed.json');
+// Signbank export used to translate a gloss to its senses.
+//
+// This was deliberately checked in beside categories.json, so the tool stayed
+// standalone and the senses a commit served were the senses it was tested
+// against. That is a real property and it is being given up here: the export
+// is 11MB and existed in twelve places across these repos, and the Signbank
+// connector in menu_beta now regenerates one shared copy on a schedule - a
+// pinned copy would go stale silently instead.
+//
+// The trade is version-pinning for freshness and one copy. If pinning matters
+// more for this tool than currency, put the file back and revert this.
+// The Signbank export is shared, not per-app: the connector in menu_beta
+// publishes one copy and every consumer reads it. sc_path() resolves it below
+// the install root, so this follows a docroot that is not /web; the literal is
+// the fallback for a host without signcollect-lib (production has none).
+if (!defined('BB_SENSES')) {
+    $bbLib = null;
+    foreach ([__DIR__ . '/../lib/paths.php', '/web/lib/paths.php'] as $bbCandidate) {
+        if (is_readable($bbCandidate)) { $bbLib = $bbCandidate; break; }
+    }
+    if ($bbLib !== null) { require_once $bbLib; }
+    define('BB_SENSES', function_exists('sc_path')
+        ? sc_path('signbank_data/glosses_transformed.json')
+        : '/web/signbank_data/glosses_transformed.json');
+}
 
 // Cache of the fully-paged, unfiltered video list, shared by `glosses` and
 // `timings`. Without it, paging through timings re-fetches all of upstream on

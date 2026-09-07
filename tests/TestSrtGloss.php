@@ -549,7 +549,7 @@ PHP
         require_once __DIR__ . '/../api.php';
         // Guards the checked-in export itself, not just the parser: a truncated
         // or wrong-shaped copy would leave every gloss senseless with no error.
-        $this->assertTrue(file_exists(BB_SENSES), "glosses_transformed.json is checked in");
+        $this->assertTrue(file_exists(BB_SENSES), "the shared Signbank export is deployed at " . BB_SENSES);
 
         $index = gloss_senses_index(BB_SENSES);
         $this->assertTrue(count($index['exact']) > 7000,
