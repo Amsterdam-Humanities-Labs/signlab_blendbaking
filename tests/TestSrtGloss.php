@@ -107,7 +107,7 @@ class TestSrtGloss {
         // A base known to exist from the live measurement.
         $p = bb_srt_path('M20240828_0037');
         $this->assertTrue(
-            is_string($p) && strpos($p, '/web/zin/eaf/zin/') === 0,
+            is_string($p) && strpos($p, sc_dir('zin/eaf/zin')) === 0,
             "a real base resolves inside the SRT directory"
         );
     }

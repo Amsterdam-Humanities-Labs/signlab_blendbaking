@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/sc_paths.php';
 /**
  * blendBaking API.
  *
@@ -15,7 +16,7 @@ require_once __DIR__ . '/srtGloss.php';
 // warn (and lose) on a second define, so tests that need an isolated
 // upstream, cache path or cap pre-define these before requiring this file.
 // Production never pre-defines them, so behaviour is unchanged there.
-if (!defined('BB_EAF_DIR'))    define('BB_EAF_DIR',    '/web/zin/eaf/zin/');
+if (!defined('BB_EAF_DIR'))    define('BB_EAF_DIR',    sc_dir('zin/eaf/zin'));
 if (!defined('BB_SRT_SUFFIX')) define('BB_SRT_SUFFIX', '_Signbank_ID_glossen.srt');
 
 // The other two annotation tiers ELAN exports beside the gloss tier. Both are
@@ -57,16 +58,7 @@ if (!defined('BB_TIMINGS_MAX_LIMIT')) define('BB_TIMINGS_MAX_LIMIT', 200);
 // publishes one copy and every consumer reads it. sc_path() resolves it below
 // the install root, so this follows a docroot that is not /web; the literal is
 // the fallback for a host without signcollect-lib (production has none).
-if (!defined('BB_SENSES')) {
-    $bbLib = null;
-    foreach ([__DIR__ . '/../lib/paths.php', '/web/lib/paths.php'] as $bbCandidate) {
-        if (is_readable($bbCandidate)) { $bbLib = $bbCandidate; break; }
-    }
-    if ($bbLib !== null) { require_once $bbLib; }
-    define('BB_SENSES', function_exists('sc_path')
-        ? sc_path('signbank_data/glosses_transformed.json')
-        : '/web/signbank_data/glosses_transformed.json');
-}
+if (!defined('BB_SENSES')) define('BB_SENSES', sc_path('signbank_data/glosses_transformed.json'));
 
 // Cache of the fully-paged, unfiltered video list, shared by `glosses` and
 // `timings`. Without it, paging through timings re-fetches all of upstream on
