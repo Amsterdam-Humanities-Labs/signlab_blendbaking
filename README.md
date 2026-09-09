@@ -11,6 +11,15 @@ that blendBaking is an HTTP client of zin's `getZinnen.php` API; there is no
 filesystem or code dependency between them beyond that HTTP call and, for one
 script, direct disk access to `zin`'s EAF directory (see below).
 
+The repository is new. It began as a server checkout at `/web/blendBaking` that
+had never had a git remote — for a while it was the one thing the deploy
+toolchain could not reach, and `interface_deploy/scripts/repos.tsv` still
+carries a comment header written when that was true. The history here is that
+checkout's own, pushed as `Amsterdam-Humanities-Labs/signlab_blendAnims`. Note
+that **the repository and the directory are named differently**: the deploy maps
+`signlab_blendAnims` onto `<docroot>/blendBaking`, and every path in this
+document is the directory name.
+
 ## What it does
 
 `index.html` is a single Bootstrap page with three tabs:
@@ -78,6 +87,77 @@ the SRT itself straight off disk at `BB_EAF_DIR` (`/web/zin/eaf/zin/` by
 default) to parse gloss cues and to serve ZIP downloads. That is a real
 filesystem dependency on the `zin` tree, distinct from the HTTP dependency on
 `getZinnen.php`.
+
+## Where it runs
+
+The **signcollect core server** (the production VPS), at `/web/blendBaking`,
+served as `https://avatar.signcollect.nl`.
+
+On production that hostname is an Apache reverse proxy in front of this tool.
+On the demo hosts (`dev2`, docroot `/web`; `dev-1`, docroot
+`/srv/signcollect/web`) it is deployed as an ordinary docroot component and
+reached at `/blendBaking/` on the demo's own single origin, because a demo has
+one TLS name and no subdomains.
+
+## Status
+
+**Production.** It is in daily use for pulling gloss SRTs, and its `timings`
+action is a public API with outside consumers — see the API tab's contract
+note.
+
+## How it is deployed
+
+Like every other web component: a row in
+`interface_deploy/scripts/repos.tsv` inside `signlab_signcollect-stack`, which
+maps `signlab_blendAnims` (branch `main`) onto `<docroot>/blendBaking`. The
+host clones it itself, `rewrite-urls.sh` repoints production hostnames at the
+demo's own origin, and the checkout *is* the deployed tree — there is no build
+step and nothing is copied from a workstation.
+
+`BB_ZIN_API` and `BB_MEDIA_ORIGIN` are the two constants that name
+`signcollect.nl`, so they are what the URL rewrite edits on a demo host.
+
+## Configuration
+
+There is no config file. Everything tunable is a `define()` at the top of
+`api.php`, each one guarded by `if (!defined(...))` so a test fixture or a
+wrapper can pre-define it:
+
+| Constant | Default | What it is |
+|---|---|---|
+| `BB_EAF_DIR` | `sc_dir('zin/eaf/zin')` | Where the SRT tiers are read from disk. |
+| `BB_ZIN_API` | `https://signcollect.nl/zin/getZinnen.php` | The upstream every row comes from. Rewritten per host. |
+| `BB_MEDIA_ORIGIN` | `https://signcollect.nl` | Prefix for relative media URLs. Rewritten per host. |
+| `BB_SENSES` | `sc_path('signbank_data/glosses_transformed.json')` | The shared Signbank export. Not carried here. |
+| `BB_CACHE_TTL` / `BB_INDEX_SCHEMA` | 600 s / 3 | Cache lifetime and gloss-index schema version. |
+| `BB_TIMINGS_LIMIT` / `BB_TIMINGS_MAX_LIMIT` | 25 / 200 | Default and hard cap on `timings` page size. |
+| `BB_MAX_ZIP` | 2000 | Bases per ZIP before truncation. |
+
+Paths resolve through `sc_paths.php`, the vendored `signcollect-lib` resolver —
+a byte-identical copy of `consumer/sc_paths.php` in
+`signlab_signcollect-lib`. **Do not edit it here**; edit the library's copy and
+re-vendor, or `tests/path-test.sh` in the deploy repo will report the mismatch.
+It falls back to a hardcoded `/web` on a host with no library, which is what
+production has.
+
+Not in git, per host: `cache/` (see below — it must be group-writable by
+`www-data`) and the Signbank export.
+
+## Dependencies
+
+- **`signlab_zin`** — over HTTP for every row
+  (`getZinnen.php?action=listMocapFiles`), and directly on disk for SRT
+  contents under `BB_EAF_DIR` (`<docroot>/zin/eaf/zin/`). blendBaking never
+  queries the database.
+- **The shared Signbank export** at
+  `<docroot>/signbank_data/glosses_transformed.json`, produced by the Signbank
+  connector in `signlab_signCollect-v2` and scheduled by `signlab_pythonCron`.
+  blendBaking **reads it rather than carrying its own copy** — the file is
+  gitignored here for exactly that reason, and six duplicate copies were
+  removed from `signlab_annotation-tool` on the same grounds.
+- **`signlab_signcollect-lib`** — via the vendored `sc_paths.php` shim.
+- **The baked-media tree** at `<docroot>/gebarenoverleg_media/fbx/post_processed/`,
+  which the FBX and GLB links point into.
 
 ## `api.php` actions
 
@@ -174,9 +254,19 @@ tiers signed off.
 
 Each cue in `glosses` carries a `senses` array — the meanings Signbank records
 for that sign — looked up in `glosses_transformed.json`, an ~11 MB Signbank
-export checked in beside `categories.json`. It is a hand-copied snapshot
-(`cp /web/glosses_transformed.json .`); there is no generator here, and it can
-lag newly added signs.
+export. That file is **shared, not carried here**: `BB_SENSES` resolves it
+through `sc_path()` to `<docroot>/signbank_data/glosses_transformed.json`, the
+one copy every consumer reads, and this repository gitignores the filename so a
+local copy cannot creep back in. It is produced by the Signbank connector
+(`signbank_sync/ecv_refresh.php` in `signlab_signCollect-v2`), on a schedule
+run by `signlab_pythonCron`.
+
+This was a deliberate trade. The export used to be checked in beside
+`categories.json`, which pinned it: the senses a commit served were the senses
+it was tested against. Sharing exchanges that for freshness and for one copy
+instead of twelve, at the cost of a runtime dependency on a file this
+repository does not own. If pinning ever matters more here than freshness,
+pre-define `BB_SENSES` to a copy inside this directory and check that copy in.
 
 The lookup key is the **exact annotated gloss**, not the folded `baseGloss`:
 Signbank has `HUILEN-A` but no `HUILEN`, so folding first would lose almost
@@ -197,9 +287,9 @@ distinct situations — a gloss that is in Signbank but carries no senses
 if it is ever wanted in the response.
 
 The distilled index is cached to `cache/senses_index.json` and invalidated by
-**mtime, not TTL**: the export is a checked-in file that only changes when
-someone copies a new one in, so a TTL would either re-parse 11 MB on a schedule
-for nothing or serve a stale index after an update. Parsing the full export
+**mtime, not TTL**: the export changes only when the connector rebuilds it —
+atomically, by `rename()` — so a TTL would either re-parse 11 MB on a schedule
+for nothing or serve a stale index after a refresh. Parsing the full export
 costs ~0.11 s and ~48 MB; the distilled index is 0.27 MB and ~0.005 s.
 
 Coverage as of 2026-09-03, across 739 baked videos: 98.4% of the 901 distinct
