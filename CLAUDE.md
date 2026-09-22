@@ -4,10 +4,8 @@ A small standalone tool over the ZIN baked-mocap corpus: download gloss SRT file
 for baked sign-language videos, review the base-gloss vocabulary those SRTs
 contain, and serve gloss timings per sentence as JSON.
 
-`README.md` is the long-form reference — architecture, the gloss index and its
-cache, regenerating `categories.json`, and the environment constraints. Read it
-before changing behaviour. This file is the short version plus the rules that are
-easy to violate without noticing.
+`README.md` covers deployment, configuration and regenerating `categories.json`.
+This file holds the layout and the rules that are easy to violate without noticing.
 
 ## Repository scope
 
