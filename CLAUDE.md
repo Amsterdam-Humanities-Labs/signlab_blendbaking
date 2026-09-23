@@ -1,4 +1,4 @@
-# Agent notes for signlab_blendAnims (blendBaking)
+# Agent notes for signlab_blendbaking (blendBaking)
 README.md covers what it does, deploy, config and `categories.json`. These are the rules the code relies on.
 
 ## Scope and layout

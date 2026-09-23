@@ -1,4 +1,4 @@
-# signlab_blendAnims (blendBaking)
+# signlab_blendbaking (blendBaking)
 A tool for the baked mocap recordings of the sentence (zin) corpus. It downloads gloss SRTs, sorts the base glosses into categories, and serves gloss timings as JSON.
 
 ## What it does
@@ -11,7 +11,7 @@ A tool for the baked mocap recordings of the sentence (zin) corpus. It downloads
 
 ## Where it runs
 Core server: `/web/blendBaking`, https://signcollect.nl/blendBaking/. Demo hosts: dev2 `/web/blendBaking`, dev-1 `/srv/signcollect/web/blendBaking`, at `/blendBaking/`.
-The folder name differs from the repo name: `repos.tsv` puts `signlab_blendAnims` in `<docroot>/blendBaking`.
+The folder name differs from the repo name: `repos.tsv` puts `signlab_blendbaking` in `<docroot>/blendBaking`.
 https://avatar.signcollect.nl is a different app (a Vite server outside this repo), not this tool.
 
 ## Status
@@ -48,7 +48,7 @@ There is no config file. The `define()`s at the top of `api.php` set the default
 `cache/` is not in git. The `www-data` group must be able to write to it: `chgrp www-data cache && chmod 775 cache`. `sc_paths.php` is copied from signcollect-lib; do not edit it here.
 
 ## Dependencies
-- [signlab_zin](https://github.com/Amsterdam-Humanities-Labs/signlab_zin): `getZinnen.php?action=listMocapFiles` over HTTP, and the SRTs on disk in `<docroot>/zin/eaf/zin/`.
+- [signlab_zinnen-annotation](https://github.com/Amsterdam-Humanities-Labs/signlab_zinnen-annotation): `getZinnen.php?action=listMocapFiles` over HTTP, and the SRTs on disk in `<docroot>/zin/eaf/zin/`.
 - The Signbank export `<docroot>/signbank_data/glosses_transformed.json`. [signlab_signCollect-v2](https://github.com/Amsterdam-Humanities-Labs/signlab_signCollect-v2) makes it; [signlab_pythonCron](https://github.com/Amsterdam-Humanities-Labs/signlab_pythonCron) schedules it.
 - `<docroot>/gebarenoverleg_media/fbx/post_processed/` for the FBX and GLB links.
 - [signlab_signcollect-lib](https://github.com/Amsterdam-Humanities-Labs/signlab_signcollect-lib): `sc_paths.php`.
