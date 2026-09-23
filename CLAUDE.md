@@ -2,7 +2,7 @@
 README.md covers what it does, deploy, config and `categories.json`. These are the rules the code relies on.
 
 ## Scope and layout
-- Own repo, separate from `/web/zin`. Only two links to zin: HTTP `getZinnen.php?action=listMocapFiles` for every row, and reading SRTs from `BB_EAF_DIR`. Do not add a third; never `require` from `/web/zin`.
+- Own repo, separate from `/web/zin`. Only two links to [signlab_zinnen-annotation](https://github.com/Amsterdam-Humanities-Labs/signlab_zinnen-annotation): HTTP `getZinnen.php?action=listMocapFiles` for every row, and reading SRTs from `BB_EAF_DIR`. Do not add a third; never `require` from `/web/zin`.
 - `api.php` holds every endpoint and only dispatches when not on CLI, so tests can `require_once` it. `srtGloss.php` is a pure library (no output, no I/O beyond given paths).
 - Check: `php tests/TestRunner.php`, `php -l <file>`, and `php scripts/find_uncategorized.php` must exit 0 before committing `categories.json`.
 

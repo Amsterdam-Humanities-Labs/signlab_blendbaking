@@ -1,4 +1,4 @@
-# signlab_blendbaking (blendBaking)
+# signlab_blendbaking
 A tool for the baked mocap recordings of the sentence (zin) corpus. It downloads gloss SRTs, sorts the base glosses into categories, and serves gloss timings as JSON.
 
 ## What it does
