@@ -52,3 +52,10 @@ There is no config file. The `define()`s at the top of `api.php` set the default
 - The Signbank export `<docroot>/signbank_data/glosses_transformed.json`. [signlab_signCollect-v2](https://github.com/Amsterdam-Humanities-Labs/signlab_signCollect-v2) makes it; [signlab_pythonCron](https://github.com/Amsterdam-Humanities-Labs/signlab_pythonCron) schedules it.
 - `<docroot>/gebarenoverleg_media/fbx/post_processed/` for the FBX and GLB links.
 - [signlab_signcollect-lib](https://github.com/Amsterdam-Humanities-Labs/signlab_signcollect-lib): `sc_paths.php`.
+
+## License and citation
+
+Apache License 2.0, copyright University of Amsterdam: see [LICENSE](LICENSE) and
+[NOTICE](NOTICE). You may use it, also commercially, as long as you credit
+Gomer Otterspeer / University of Amsterdam as the source. To cite it, use
+[CITATION.cff](CITATION.cff) (the *Cite this repository* button on GitHub) or the DOI [10.21942/uva.33980308](https://doi.org/10.21942/uva.33980308).
